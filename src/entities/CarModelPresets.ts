@@ -512,10 +512,11 @@ export class CarChassisBuilder {
     // =============================================================
     // 6. FORGED BBS-STYLE MULTI-SPOKE ALLOY WHEELS & BREMBO CALIPERS
     // =============================================================
-    const tireMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.9, metalness: 0.1 });
-    const rimMat = new THREE.MeshStandardMaterial({ color: 0xe0e6ed, metalness: 0.95, roughness: 0.12 });
+    const tireMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.88, metalness: 0.12 });
+    const rimMat = new THREE.MeshStandardMaterial({ color: 0xe0e6ed, metalness: 0.96, roughness: 0.08 });
     const rotorMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.92, roughness: 0.18 });
-    const caliperMat = new THREE.MeshStandardMaterial({ color: 0xff0022, roughness: 0.25, metalness: 0.6 });
+    const caliperMat = new THREE.MeshStandardMaterial({ color: 0xff0022, roughness: 0.22, metalness: 0.65 });
+    const tireDecalMat = new THREE.MeshBasicMaterial({ color: 0xffd700 }); // High-visibility yellow tire branding
 
     const wheelPositions = [
       new THREE.Vector3(-1.14, 0.18, -1.05), // Front Left
@@ -525,43 +526,81 @@ export class CarChassisBuilder {
     ];
 
     wheelPositions.forEach((pos, idx) => {
+      const isLeft = idx % 2 === 0;
       const hub = new THREE.Group();
       hub.position.copy(pos);
 
+      // 1. Static Non-Rotating Brembo Brake Caliper (stays fixed on hub)
+      const caliper = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.16), caliperMat);
+      caliper.position.set(isLeft ? -0.12 : 0.12, 0.22, 0);
+      hub.add(caliper);
+
+      // Caliper White Brembo Logo Strip
+      const caliperLogo = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.04), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      caliperLogo.position.set(isLeft ? -0.165 : 0.165, 0.22, 0);
+      caliperLogo.rotation.y = isLeft ? -Math.PI / 2 : Math.PI / 2;
+      hub.add(caliperLogo);
+
+      // 2. Rotating Wheel Group (Spins visibly with driving velocity!)
+      const spinGroup = new THREE.Group();
+
+      // Performance Treaded Rubber Tire
       const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.46, 28), tireMat);
       tire.rotation.z = Math.PI / 2;
       tire.castShadow = true;
-      hub.add(tire);
+      spinGroup.add(tire);
 
+      // High-Contrast Yellow/White Racing Sidewall Sponsor Lettering (Visibly shows rotation!)
+      for (let t = 0; t < 4; t++) {
+        const letter = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.055, 0.16), tireDecalMat);
+        const a = (t / 4) * Math.PI * 2 + Math.PI / 8;
+        letter.position.set(isLeft ? -0.235 : 0.235, Math.sin(a) * 0.40, Math.cos(a) * 0.40);
+        letter.rotation.x = a;
+        spinGroup.add(letter);
+      }
+
+      // Deep-Dish Rim Barrel
       const rimBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.47, 24), darkTrimMat);
       rimBarrel.rotation.z = Math.PI / 2;
-      hub.add(rimBarrel);
+      spinGroup.add(rimBarrel);
 
+      // Polished Lip Ring
+      const lipRing = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.02, 10, 24), chromeMat);
+      lipRing.position.x = isLeft ? -0.23 : 0.23;
+      lipRing.rotation.y = Math.PI / 2;
+      spinGroup.add(lipRing);
+
+      // 10-Spoke Forged Mesh Wheel Face (Spins with wheel!)
       for (let s = 0; s < 10; s++) {
         const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.34, 0.03), rimMat);
         const angle = (s / 10) * Math.PI * 2;
-        spoke.position.set(idx % 2 === 0 ? -0.23 : 0.23, Math.sin(angle) * 0.16, Math.cos(angle) * 0.16);
+        spoke.position.set(isLeft ? -0.23 : 0.23, Math.sin(angle) * 0.16, Math.cos(angle) * 0.16);
         spoke.rotation.x = angle;
-        hub.add(spoke);
+        spinGroup.add(spoke);
       }
 
+      // Center Chrome Hex Cap with BMW / BBS Emblem
       const hubCap = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.06, 6), chromeMat);
       hubCap.rotation.z = Math.PI / 2;
-      hubCap.position.x = idx % 2 === 0 ? -0.24 : 0.24;
-      hub.add(hubCap);
+      hubCap.position.x = isLeft ? -0.24 : 0.24;
+      spinGroup.add(hubCap);
 
+      const centerEmblem = new THREE.Mesh(new THREE.CircleGeometry(0.06, 12), new THREE.MeshBasicMaterial({ color: 0x0066ff }));
+      centerEmblem.position.x = isLeft ? -0.272 : 0.272;
+      centerEmblem.rotation.y = isLeft ? -Math.PI / 2 : Math.PI / 2;
+      spinGroup.add(centerEmblem);
+
+      // Ventilated Cross-Drilled Brake Rotor (Spins with wheel!)
       const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.03, 20), rotorMat);
       rotor.rotation.z = Math.PI / 2;
-      rotor.position.x = idx % 2 === 0 ? -0.12 : 0.12;
-      hub.add(rotor);
+      rotor.position.x = isLeft ? -0.12 : 0.12;
+      spinGroup.add(rotor);
 
-      const caliper = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.14), caliperMat);
-      caliper.position.set(idx % 2 === 0 ? -0.12 : 0.12, 0.22, 0);
-      hub.add(caliper);
-
+      hub.add(spinGroup);
       parentGroup.add(hub);
+
       wheelHubs.push(hub);
-      wheels.push(tire);
+      wheels.push(spinGroup as any);
     });
 
     // =============================================================

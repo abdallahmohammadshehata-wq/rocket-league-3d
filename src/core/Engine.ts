@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { SoundManager } from './SoundManager';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 export class Engine {
   public scene!: THREE.Scene;
@@ -48,7 +49,13 @@ export class Engine {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.28;
+    this.renderer.toneMappingExposure = 1.35;
+
+    // High-Dynamic Range Environment Reflections for Clearcoat Paint & Glass
+    const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+    pmremGenerator.compileEquirectangularShader();
+    const envTexture = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environment = envTexture;
 
     container.appendChild(this.renderer.domElement);
 

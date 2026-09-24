@@ -185,14 +185,19 @@ export class Car {
 
     this.supersonicTrails.forEach((t) => (t.visible = this.isSupersonic));
 
-    // Animate wheels rotation
+    // Animate wheels spin rotation based on speed
+    const forwardDirection = this.getForward();
+    const forwardDot = linvel.x * forwardDirection.x + linvel.z * forwardDirection.z;
+    const isMovingForward = forwardDot >= -0.1;
+    const wheelRotSpeed = (speed / 0.5); // v / r rolling angular velocity
+
     this.wheels.forEach((w) => {
-      w.rotation.x += speed * dt * (input.throttle >= 0 ? 2.5 : -2.5);
+      w.rotation.x += (isMovingForward ? 1 : -1) * wheelRotSpeed * dt * 1.8;
     });
 
-    // Steer front wheel hubs
+    // Steer front wheel hubs smoothly
     if (this.wheelHubs.length >= 2) {
-      const frontSteer = -input.steer * 0.42;
+      const frontSteer = -this.smoothedSteer * 0.44;
       this.wheelHubs[0].rotation.y = frontSteer;
       this.wheelHubs[1].rotation.y = frontSteer;
     }
