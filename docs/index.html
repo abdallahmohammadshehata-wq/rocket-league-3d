@@ -338,7 +338,49 @@
       z-index: 5;
     }
 
+    /* QUICK CHAT FEED (TOP LEFT) */
+    .quick-chat-feed {
+      position: absolute;
+      top: 68px;
+      left: clamp(10px, 2vw, 24px);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: none;
+      z-index: 25;
+      max-width: 280px;
+    }
+    .chat-msg {
+      background: rgba(8, 14, 28, 0.88);
+      border-left: 3.5px solid #00d2ff;
+      border-radius: 6px;
+      padding: 5px 11px;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ffffff;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      animation: chatSlideIn 0.25s ease-out, chatFadeOut 0.5s ease-in 3.5s forwards;
+    }
+    .chat-msg.team-orange {
+      border-left-color: #ff7700;
+    }
+    .chat-msg.system-msg {
+      border-left-color: #ffea00;
+      color: #ffea00;
+    }
+    @keyframes chatSlideIn {
+      from { transform: translateX(-15px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes chatFadeOut {
+      from { opacity: 1; }
+      to { opacity: 0; transform: translateY(-8px); }
+    }
+
     /* RUMBLE POWERUP HUD (CENTER BOTTOM) */
+
     .rumble-hud {
       position: absolute;
       bottom: 24px;
@@ -833,7 +875,7 @@
     }
 
   </style>
-  <script type="module" crossorigin src="./assets/index-D5j_WMWN.js"></script>
+  <script type="module" crossorigin src="./assets/index-ChabL7lE.js"></script>
 </head>
 <body>
   <div id="canvas-container"></div>
@@ -896,8 +938,12 @@
       </div>
     </div>
 
+    <!-- Quick Chat Feed (Top Left) -->
+    <div class="quick-chat-feed" id="quick-chat-feed"></div>
+
     <!-- Gamepad Connected Indicator -->
     <div class="gamepad-status" id="gamepad-status">
+
       <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7H8v3H6v-3H3v-2h3V8h2v3h3v2zm4.5 2c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4-3c-.83 0-1.5-.67-1.5-1.5S18.67 9 19.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
       <span>1 CONTROLLER CONNECTED</span>
     </div>

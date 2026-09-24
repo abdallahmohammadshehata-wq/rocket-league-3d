@@ -316,6 +316,7 @@ class Game {
     if (bPos.z > 25 && bVel.z > 14 && Math.abs(bPos.x) < 14) {
       this.lastShotNotificationTime = now;
       this.hud.showEvent('SHOT ON GOAL! +30');
+      this.hud.addQuickChat('P1 BLUE', 'Nice shot!', 'BLUE');
       this.cameraController.addScreenShake(0.35);
       this.input.playHaptic(0, 200, 0.4, 0.7);
     }
@@ -325,6 +326,8 @@ class Game {
     if (bPos.z < -38 && bVel.z < -10 && pPos.distanceTo(bPos) < 6.5) {
       this.lastShotNotificationTime = now;
       this.hud.showEvent('EPIC SAVE! +50');
+      this.hud.addQuickChat('P1 BLUE', 'What a save!', 'BLUE');
+      setTimeout(() => this.hud.addQuickChat('ORANGE BOT', 'Close one!', 'ORANGE'), 600);
       this.cameraController.addScreenShake(0.5);
       this.input.playHaptic(0, 300, 0.6, 0.9);
     }
@@ -393,8 +396,12 @@ class Game {
 
     if (scoringTeam === 'BLUE') {
       this.blueScore++;
+      this.hud.addQuickChat('P1 BLUE', 'GOAL!', 'BLUE');
+      setTimeout(() => this.hud.addQuickChat('ORANGE BOT', 'What a save!', 'ORANGE'), 500);
     } else {
       this.orangeScore++;
+      this.hud.addQuickChat('ORANGE BOT', 'Calculated.', 'ORANGE');
+      setTimeout(() => this.hud.addQuickChat('P1 BLUE', 'No problem.', 'BLUE'), 500);
     }
 
     const ballVel = this.ball.getVelocity();
@@ -421,6 +428,7 @@ class Game {
 
     this.hud.showGoal(scoringTeam, speedKmh);
   }
+
 
   private renderStep(dt: number): void {
     // 1. Update Cameras

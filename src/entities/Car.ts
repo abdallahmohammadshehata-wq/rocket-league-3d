@@ -495,12 +495,28 @@ export class Car {
 
       // Front bumper alignment check for power shots
       const frontAlignment = hitDir.dot(forward);
+      const underbellyAlignment = hitDir.dot(this.getUp());
+
+      // Legendary Rocket League FLIP RESET (Hitting bottom of car on ball)
+      if (!this.isGrounded && underbellyAlignment < -0.35) {
+        this.jumpsRemaining = 1;
+        this.airTime = 0;
+        this.soundManager.playBoostPickup();
+        this.particleManager.spawnShockwaveRing(carPos, 0x00ff88, 1.4, 18.0);
+      }
+
       const isPowerShot = frontAlignment > 0.4 && (carSpeed > 10 || this.isBoosting || this.isDodging);
 
-      // Calibrated hit magnitude for the 8kg ball
+      // Pinch Shot Detection (Near wall or floor)
+      const isNearWallOrFloor = Math.abs(ballPos.x) > 37 || Math.abs(ballPos.z) > 46 || ballPos.y < 2.2;
+      const isPinch = isNearWallOrFloor && carSpeed > 15 && isPowerShot;
+
+      // Calibrated hit magnitude for tournament ball
       let forceMagnitude = 180; // Base hit
-      if (isPowerShot) {
-        forceMagnitude = 350 + carSpeed * 12;
+      if (isPinch) {
+        forceMagnitude = 650 + carSpeed * 18; // Massive supersonic pinch acceleration
+      } else if (isPowerShot) {
+        forceMagnitude = 360 + carSpeed * 12;
         if (this.isSupersonic) forceMagnitude += 150;
         if (this.isDodging) forceMagnitude += 120;
       } else {
@@ -508,7 +524,7 @@ export class Car {
       }
 
       // Add slight vertical lift to shots
-      hitDir.y = Math.max(hitDir.y, 0.18);
+      hitDir.y = Math.max(hitDir.y, isPinch ? 0.35 : 0.18);
       hitDir.normalize();
 
       const impulse = hitDir.multiplyScalar(forceMagnitude);
@@ -516,15 +532,19 @@ export class Car {
 
       // Screen shake, sparks, and sound
       const contactPoint = carPos.clone().add(ballPos).multiplyScalar(0.5);
-      const intensity = isPowerShot ? 1.8 : Math.max(0.8, carSpeed / 12.0);
+      const intensity = isPinch ? 2.5 : isPowerShot ? 1.8 : Math.max(0.8, carSpeed / 12.0);
       this.soundManager.playBallHit(intensity);
       this.particleManager.emitBallHitSparks(contactPoint, intensity);
 
-      if (isPowerShot) {
+      if (isPinch) {
+        this.soundManager.playSonicBoom();
+        this.particleManager.spawnShockwaveRing(contactPoint, 0xff00ff, 2.2, 35.0);
+      } else if (isPowerShot) {
         this.particleManager.spawnShockwaveRing(contactPoint, this.customization.accentColor, 1.4, 18.0);
       }
     }
   }
+
 
   public collectBoost(amount: number): void {
     this.boostAmount = Math.min(100, this.boostAmount + amount);

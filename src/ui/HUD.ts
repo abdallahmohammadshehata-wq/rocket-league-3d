@@ -46,6 +46,7 @@ export class HUD {
   private eventPopupEl: HTMLElement;
   private eventTextEl: HTMLElement;
   private gamepadStatusEl: HTMLElement;
+  private quickChatFeedEl: HTMLElement;
 
   // Garage Modal Elements
   private garageModalEl: HTMLElement;
@@ -97,6 +98,7 @@ export class HUD {
     this.p2CamDotEl = document.getElementById('p2-cam-dot')!;
     this.p2CamModeTextEl = document.getElementById('p2-cam-mode-text')!;
 
+
     // Rumble Elements
     this.rumbleHudEl = document.getElementById('rumble-hud')!;
     this.powerupIconEl = document.getElementById('powerup-icon')!;
@@ -113,6 +115,8 @@ export class HUD {
     this.eventPopupEl = document.getElementById('event-popup')!;
     this.eventTextEl = document.getElementById('event-text')!;
     this.gamepadStatusEl = document.getElementById('gamepad-status')!;
+    this.quickChatFeedEl = document.getElementById('quick-chat-feed')!;
+
 
     // Garage Modal
     this.garageModalEl = document.getElementById('garage-modal')!;
@@ -434,4 +438,24 @@ export class HUD {
     const next = show !== undefined ? show : !current;
     this.garageModalEl.style.display = next ? 'flex' : 'none';
   }
+
+  public addQuickChat(author: string, message: string, team: 'BLUE' | 'ORANGE' | 'SYSTEM' = 'BLUE'): void {
+    if (!this.quickChatFeedEl) return;
+    const msgEl = document.createElement('div');
+    msgEl.className = `chat-msg ${team === 'ORANGE' ? 'team-orange' : team === 'SYSTEM' ? 'system-msg' : ''}`;
+    msgEl.innerHTML = `<span style="opacity:0.85;">${author}:</span> ${message}`;
+    this.quickChatFeedEl.appendChild(msgEl);
+
+    // Keep max 4 visible messages
+    while (this.quickChatFeedEl.children.length > 4) {
+      this.quickChatFeedEl.removeChild(this.quickChatFeedEl.children[0]);
+    }
+
+    setTimeout(() => {
+      if (msgEl.parentElement) {
+        msgEl.parentElement.removeChild(msgEl);
+      }
+    }, 4000);
+  }
 }
+
