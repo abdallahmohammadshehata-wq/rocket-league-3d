@@ -11,6 +11,9 @@ export class SoundManager {
   private driftNode: AudioBufferSourceNode | null = null;
   private driftGain: GainNode | null = null;
 
+  private crowdNode: AudioBufferSourceNode | null = null;
+  private crowdGain: GainNode | null = null;
+
   constructor() {
     const unlock = () => {
       this.init();
@@ -30,10 +33,49 @@ export class SoundManager {
       this.ctx = new AudioCtx();
       this.setupEngineAudio();
       this.setupDriftAudio();
+      this.setupCrowdAudio();
     } catch {
       console.warn('Web Audio API not supported');
     }
   }
+
+  private setupCrowdAudio(): void {
+    if (!this.ctx) return;
+    try {
+      const bufferSize = this.ctx.sampleRate * 4;
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let lastOut = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        lastOut = (lastOut + 0.02 * white) / 1.02; // Pink-ish noise filter
+        data[i] = lastOut * 3.5;
+      }
+
+      this.crowdNode = this.ctx.createBufferSource();
+      this.crowdNode.buffer = buffer;
+      this.crowdNode.loop = true;
+
+      const bandpass = this.ctx.createBiquadFilter();
+      bandpass.type = 'lowpass';
+      bandpass.frequency.setValueAtTime(420, this.ctx.currentTime);
+
+      this.crowdGain = this.ctx.createGain();
+      this.crowdGain.gain.setValueAtTime(0.04, this.ctx.currentTime);
+
+      this.crowdNode.connect(bandpass);
+      bandpass.connect(this.crowdGain);
+      this.crowdGain.connect(this.ctx.destination);
+      this.crowdNode.start();
+    } catch {}
+  }
+
+  public updateCrowdExcitement(intensity: number): void {
+    if (!this.ctx || !this.crowdGain || this.isMuted) return;
+    const target = 0.03 + Math.min(1.0, Math.max(0, intensity)) * 0.12;
+    this.crowdGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.2);
+  }
+
 
   private setupEngineAudio(): void {
     if (!this.ctx) return;

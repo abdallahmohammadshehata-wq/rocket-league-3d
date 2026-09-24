@@ -9,6 +9,9 @@ export default defineConfig({
     host: true
   },
   build: {
+    outDir: 'docs',
+    emptyOutDir: true,
     target: 'esnext'
   }
 });
+

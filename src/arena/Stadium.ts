@@ -542,6 +542,102 @@ export class Stadium {
       archMesh.rotation.x = Math.PI;
       this.scene.add(archMesh);
     }
+
+    // 3. 3D Stadium Seating Tiers & Spectator Grandstands
+    const seatMatBlue = new THREE.MeshStandardMaterial({ color: 0x0055aa, roughness: 0.7 });
+    const seatMatOrange = new THREE.MeshStandardMaterial({ color: 0xcc5500, roughness: 0.7 });
+    const seatMatDark = new THREE.MeshStandardMaterial({ color: 0x111c2e, roughness: 0.8 });
+
+    // Multi-tier tiered grandstands along the sidelines (Left and Right)
+    for (let tier = 0; tier < 4; tier++) {
+      const tierWidth = this.length + 10;
+      const tierDepth = 4.0;
+      const tierHeight = 1.6;
+      const posX = this.width / 2 + 2.5 + tier * 3.5;
+      const posY = 1.0 + tier * 2.2;
+
+      // Right Grandstand Tier
+      const tierGeoR = new THREE.BoxGeometry(tierDepth, tierHeight, tierWidth);
+      const tierMeshR = new THREE.Mesh(tierGeoR, tier % 2 === 0 ? seatMatDark : seatMatBlue);
+      tierMeshR.position.set(posX, posY, 0);
+      this.scene.add(tierMeshR);
+
+      // Left Grandstand Tier
+      const tierMeshL = new THREE.Mesh(tierGeoR, tier % 2 === 0 ? seatMatDark : seatMatOrange);
+      tierMeshL.position.set(-posX, posY, 0);
+      this.scene.add(tierMeshL);
+    }
+
+    // 4. Central Overhead 4-Sided Cyber Jumbotron Screen
+    const jumbotronGroup = new THREE.Group();
+    jumbotronGroup.position.set(0, this.height - 2.5, 0);
+
+    const jumbotronFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(9.0, 4.2, 9.0),
+      new THREE.MeshStandardMaterial({ color: 0x060b14, metalness: 0.9, roughness: 0.2 })
+    );
+    jumbotronGroup.add(jumbotronFrame);
+
+    // Glowing Jumbotron LED Screens (4 sides)
+    const jumbotronCanvas = document.createElement('canvas');
+    jumbotronCanvas.width = 512;
+    jumbotronCanvas.height = 256;
+    const jCtx = jumbotronCanvas.getContext('2d')!;
+    jCtx.fillStyle = '#050a14';
+    jCtx.fillRect(0, 0, 512, 256);
+    jCtx.fillStyle = '#00d2ff';
+    jCtx.font = 'bold 36px "Orbitron", sans-serif';
+    jCtx.textAlign = 'center';
+    jCtx.shadowColor = '#00d2ff';
+    jCtx.shadowBlur = 14;
+    jCtx.fillText('⚡ ROCKET LEAGUE ⚡', 256, 75);
+    jCtx.fillStyle = '#ffea00';
+    jCtx.font = 'bold 44px "Orbitron", sans-serif';
+    jCtx.fillText('LIVE MATCH', 256, 150);
+    jCtx.fillStyle = '#ff7700';
+    jCtx.font = '24px "Rajdhani", sans-serif';
+    jCtx.fillText('CYBER STADIUM ARENA', 256, 210);
+
+    const jumbotronTex = new THREE.CanvasTexture(jumbotronCanvas);
+    const jumbotronScreenMat = new THREE.MeshBasicMaterial({ map: jumbotronTex });
+
+    // 4 Side Screens
+    const screenGeo = new THREE.PlaneGeometry(8.2, 3.4);
+    
+    // Front Screen (+Z)
+    const screenFront = new THREE.Mesh(screenGeo, jumbotronScreenMat);
+    screenFront.position.set(0, 0, 4.52);
+    jumbotronGroup.add(screenFront);
+
+    // Back Screen (-Z)
+    const screenBack = new THREE.Mesh(screenGeo, jumbotronScreenMat);
+    screenBack.position.set(0, 0, -4.52);
+    screenBack.rotation.y = Math.PI;
+    jumbotronGroup.add(screenBack);
+
+    // Left Screen (-X)
+    const screenLeft = new THREE.Mesh(screenGeo, jumbotronScreenMat);
+    screenLeft.position.set(-4.52, 0, 0);
+    screenLeft.rotation.y = -Math.PI / 2;
+    jumbotronGroup.add(screenLeft);
+
+    // Right Screen (+X)
+    const screenRight = new THREE.Mesh(screenGeo, jumbotronScreenMat);
+    screenRight.position.set(4.52, 0, 0);
+    screenRight.rotation.y = Math.PI / 2;
+    jumbotronGroup.add(screenRight);
+
+    // Suspension cables from ceiling
+    const cableMat = new THREE.MeshBasicMaterial({ color: 0x334455 });
+    [-4, 4].forEach((cx) => {
+      [-4, 4].forEach((cz) => {
+        const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3.5), cableMat);
+        cable.position.set(cx, 2.5, cz);
+        jumbotronGroup.add(cable);
+      });
+    });
+
+    this.scene.add(jumbotronGroup);
   }
 
   private buildFloodlightBeams(): void {

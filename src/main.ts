@@ -275,6 +275,15 @@ class Game {
     this.stadium.update(dt);
     this.particleManager.update(dt);
 
+    // Dynamic Crowd Ambient Excitement
+    const bPos = this.ball.getPosition();
+    const bVel = this.ball.getVelocity();
+    const distToGoal = Math.min(Math.abs(bPos.z - (-50)), Math.abs(bPos.z - 50));
+    const urgency = Math.max(0, 1.0 - distToGoal / 35.0);
+    const speedRatio = Math.min(1.0, bVel.length() / 28.0);
+    this.engine.soundManager.updateCrowdExcitement(urgency * 0.7 + speedRatio * 0.3);
+
+
     // 6. Check Boost Pad Pickups for Both Players
     this.checkBoostPickups(this.playerCar);
     if (this.currentGameMode !== 'FREEPLAY') {
