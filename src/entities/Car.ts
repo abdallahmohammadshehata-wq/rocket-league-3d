@@ -17,7 +17,7 @@ export class Car {
   public collider: RAPIER.Collider;
 
   public boostAmount: number = 33;
-  public isGrounded: boolean = false;
+  public isGrounded: boolean = true;
   public isBoosting: boolean = false;
   public isDrifting: boolean = false;
   public isSupersonic: boolean = false;
@@ -30,17 +30,17 @@ export class Car {
   public readonly isBlueTeam: boolean;
   public customization: CarCustomization;
 
-  // Jump & Dodge State (Calibrated to official Rocket League timing)
+  // Jump & Dodge State
   private airTime: number = 0;
   private jumpsRemaining: number = 2;
   private isDodging: boolean = false;
   private dodgeTimer: number = 0;
-  private readonly dodgeDuration: number = 0.5; // 500ms dodge duration
+  private readonly dodgeDuration: number = 0.5;
   private dodgeAxis: THREE.Vector3 = new THREE.Vector3();
   private dodgeStartRotation: THREE.Quaternion = new THREE.Quaternion();
   private isJumpHolding: boolean = false;
   private jumpHoldTimer: number = 0;
-  private readonly maxJumpHoldTime: number = 0.20; // 200ms jump hold bonus window
+  private readonly maxJumpHoldTime: number = 0.20;
 
   // Mesh & Visual Components
   private bodyMesh!: THREE.Mesh;
@@ -52,17 +52,17 @@ export class Car {
   private underglowMesh!: THREE.Mesh;
   private topperGroup!: THREE.Group;
 
-  // Raycast ground contact points (Calibrated for 4.0m length x 2.1m width chassis)
+  // Ground check ray offsets
   private readonly rayOffsets = [
-    new THREE.Vector3(-0.95, 0.0, -1.5), // Front Left
-    new THREE.Vector3(0.95, 0.0, -1.5),  // Front Right
-    new THREE.Vector3(-0.95, 0.0, 1.5),  // Rear Left
-    new THREE.Vector3(0.95, 0.0, 1.5)    // Rear Right
+    new THREE.Vector3(-0.95, 0.0, -1.5),
+    new THREE.Vector3(0.95, 0.0, -1.5),
+    new THREE.Vector3(-0.95, 0.0, 1.5),
+    new THREE.Vector3(0.95, 0.0, 1.5)
   ];
   private readonly rayLength: number = 1.45;
   private contactNormal: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
 
-  // Ball hit cooldown to avoid multi-hits on a single contact
+  // Ball hit cooldown
   private lastBallHitTime: number = 0;
 
   constructor(
@@ -83,30 +83,32 @@ export class Car {
     this.mesh = new THREE.Group();
     this.scene.add(this.mesh);
 
-    // 1. Build 3D Car Model based on customization
+    // 1. Build 3D Car Model
     this.rebuildMesh();
 
     // 2. Rapier RigidBody
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(0, 1.8, isBlueTeam ? -32 : 32)
-      .setLinearDamping(0.04)
-      .setAngularDamping(2.2)
+      .setTranslation(0, 1.2, isBlueTeam ? -32 : 32)
+      .setLinearDamping(0.05)
+      .setAngularDamping(2.5)
       .setCcdEnabled(true);
 
     this.body = world.createRigidBody(bodyDesc);
 
-    // Chassis Box Collider with 0 friction to prevent ground sticking/stalling
-    const colliderDesc = RAPIER.ColliderDesc.cuboid(1.05, 0.5, 1.95)
-      .setMass(120.0) // Calibrated 120kg mass
-      .setFriction(0.0) // Zero box friction - all traction driven through code
+    // Chassis Box Collider (0 friction to eliminate ground dragging/sticking)
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(1.05, 0.48, 1.95)
+      .setMass(120.0)
+      .setFriction(0.0)
       .setRestitution(0.1);
 
     this.collider = world.createCollider(colliderDesc, this.body);
 
-    // Set initial team orientation
+    // Initial rotation
     const initRotY = isBlueTeam ? Math.PI : 0;
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), initRotY);
     this.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+    this.mesh.position.set(0, 1.2, isBlueTeam ? -32 : 32);
+    this.mesh.quaternion.copy(q);
   }
 
   public rebuildMesh(): void {
@@ -134,6 +136,8 @@ export class Car {
     const rotY = isBlueTeam ? Math.PI : 0;
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY);
     this.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+    this.mesh.position.copy(kickoffPosition);
+    this.mesh.quaternion.copy(q);
 
     this.boostAmount = 33;
     this.isDodging = false;
@@ -147,19 +151,25 @@ export class Car {
   }
 
   public update(dt: number, input: InputState): void {
-    // 1. Raycast Ground / Wall / Ceiling Contact Check
-    this.checkGroundContact();
-
-    // 2. Process Driving, Airborne, Dodge, & Boost Physics
-    this.handlePhysics(dt, input);
-
-    // 3. Sync Three.js Mesh with Rapier RigidBody
+    // 1. Sync Mesh with RigidBody first
     const pos = this.body.translation();
     const rot = this.body.rotation();
     this.mesh.position.set(pos.x, pos.y, pos.z);
     this.mesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
 
-    // 4. Update Wheels, Supersonic FX, & Audio
+    // 2. Ground & Surface Normal Check
+    this.checkGroundContact();
+
+    // 3. Process Driving, Airborne, Dodge, & Boost Physics
+    this.handlePhysics(dt, input);
+
+    // 4. Re-sync Mesh after physics impulses
+    const finalPos = this.body.translation();
+    const finalRot = this.body.rotation();
+    this.mesh.position.set(finalPos.x, finalPos.y, finalPos.z);
+    this.mesh.quaternion.set(finalRot.x, finalRot.y, finalRot.z, finalRot.w);
+
+    // 5. Update Wheels, Supersonic FX, & Audio
     const linvel = this.body.linvel();
     const speed = Math.hypot(linvel.x, linvel.y, linvel.z);
     this.currentSpeedKmh = Math.round(speed * 3.6);
@@ -227,6 +237,17 @@ export class Car {
     const carPos = this.mesh.position;
     const carQuat = this.mesh.quaternion;
 
+    // Fail-safe floor detection: stadium floor is strictly at y = 0.0
+    // If the car's center is at y <= 1.35, the car is physically grounded on the pitch!
+    if (carPos.y <= 1.35) {
+      this.isGrounded = true;
+      this.contactNormal.set(0, 1, 0);
+      this.airTime = 0;
+      this.jumpsRemaining = 2;
+      return;
+    }
+
+    // Wall & Ramp Raycasting for climbing 45° ramps and vertical arena walls
     let hits = 0;
     const avgNormal = new THREE.Vector3(0, 0, 0);
     const downLocal = new THREE.Vector3(0, -1, 0).applyQuaternion(carQuat);
@@ -244,8 +265,8 @@ export class Car {
         true,
         undefined,
         undefined,
-        undefined,
-        this.body
+        this.collider, // Exclude own collider
+        this.body      // Exclude own body
       );
 
       if (hit && hit.timeOfImpact <= this.rayLength) {
@@ -265,7 +286,8 @@ export class Car {
   }
 
   private handlePhysics(dt: number, input: InputState): void {
-    const carQuat = this.mesh.quaternion;
+    const r = this.body.rotation();
+    const carQuat = new THREE.Quaternion(r.x, r.y, r.z, r.w);
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(carQuat);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(carQuat);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(carQuat);
@@ -286,7 +308,7 @@ export class Car {
       const forwardSpeed = currentVel.dot(forward);
 
       if (forwardSpeed < maxBoostSpeed) {
-        const boostAcc = this.isGrounded ? 24.0 : 25.0;
+        const boostAcc = this.isGrounded ? 25.0 : 26.0;
         const boostForce = forward.clone().multiplyScalar(boostAcc * mass);
         this.body.applyImpulse(
           new RAPIER.Vector3(boostForce.x * dt, boostForce.y * dt, boostForce.z * dt),
@@ -342,7 +364,7 @@ export class Car {
       if (input.jumpJustPressed) {
         if (this.isGrounded) {
           // Ground Jump: crisp initial pop off surface
-          const jumpImpulse = up.clone().multiplyScalar(6.2 * mass);
+          const jumpImpulse = up.clone().multiplyScalar(6.5 * mass);
           this.body.applyImpulse(
             new RAPIER.Vector3(jumpImpulse.x, jumpImpulse.y, jumpImpulse.z),
             true
@@ -357,7 +379,7 @@ export class Car {
           if (hasDirection) {
             this.isDodging = true;
             this.dodgeTimer = 0;
-            this.dodgeStartRotation.copy(this.mesh.quaternion);
+            this.dodgeStartRotation.copy(carQuat);
 
             const dodgeDir = new THREE.Vector3();
             if (input.throttle > 0.1) dodgeDir.add(forward.clone().multiplyScalar(input.throttle));
@@ -371,7 +393,7 @@ export class Car {
             const curV = this.body.linvel();
             this.body.setLinvel(new RAPIER.Vector3(curV.x, Math.max(curV.y, 0) + 1.2, curV.z), true);
 
-            const dodgeImpulse = dodgeDir.multiplyScalar(11.0 * mass);
+            const dodgeImpulse = dodgeDir.multiplyScalar(11.5 * mass);
             this.body.applyImpulse(
               new RAPIER.Vector3(dodgeImpulse.x, dodgeImpulse.y, dodgeImpulse.z),
               true
@@ -380,7 +402,7 @@ export class Car {
             this.soundManager.playDodge();
             this.particleManager.spawnShockwaveRing(this.getPosition(), this.customization.accentColor, 1.8, 24.0);
           } else {
-            const doubleJumpImpulse = up.clone().multiplyScalar(6.0 * mass);
+            const doubleJumpImpulse = up.clone().multiplyScalar(6.2 * mass);
             this.body.applyImpulse(
               new RAPIER.Vector3(doubleJumpImpulse.x, doubleJumpImpulse.y, doubleJumpImpulse.z),
               true
@@ -420,32 +442,32 @@ export class Car {
       const maxDriveSpeed = 28.5; // ~102 km/h
       const maxReverseSpeed = -18.0; // ~65 km/h
 
-      // 3C. Instant Responsive Acceleration Curve
+      // 3C. Instant Responsive Acceleration Curve (Forward & Reverse)
       if (input.throttle > 0) {
-        if (forwardVel < -0.4) {
-          // Quick Brake from reverse
-          const brakeForce = forward.clone().multiplyScalar(75.0 * mass);
+        if (forwardVel < -0.2) {
+          // Instantly brake and cancel reverse momentum
+          const brakeForce = forward.clone().multiplyScalar(80.0 * mass);
           this.body.applyImpulse(new RAPIER.Vector3(brakeForce.x * dt, brakeForce.y * dt, brakeForce.z * dt), true);
         } else if (forwardVel < maxDriveSpeed) {
-          // Punchy 36.0 m/s² initial acceleration from standstill!
-          const driveAcc = 36.0 * Math.max(0.18, 1.0 - forwardVel / maxDriveSpeed);
+          // Strong 42.0 m/s² initial acceleration from dead stop!
+          const driveAcc = 42.0 * Math.max(0.22, 1.0 - forwardVel / maxDriveSpeed);
           const driveForce = forward.clone().multiplyScalar(driveAcc * mass * input.throttle);
           this.body.applyImpulse(new RAPIER.Vector3(driveForce.x * dt, driveForce.y * dt, driveForce.z * dt), true);
         }
       } else if (input.throttle < 0) {
-        if (forwardVel > 0.4) {
-          // Quick Brake from forward
-          const brakeForce = forward.clone().multiplyScalar(-75.0 * mass);
+        if (forwardVel > 0.2) {
+          // Brake from forward
+          const brakeForce = forward.clone().multiplyScalar(-80.0 * mass);
           this.body.applyImpulse(new RAPIER.Vector3(brakeForce.x * dt, brakeForce.y * dt, brakeForce.z * dt), true);
         } else if (forwardVel > maxReverseSpeed) {
-          // Instant Reverse
-          const reverseForce = forward.clone().multiplyScalar(24.0 * mass * input.throttle);
+          // Reverse Drive
+          const reverseForce = forward.clone().multiplyScalar(28.0 * mass * input.throttle);
           this.body.applyImpulse(new RAPIER.Vector3(reverseForce.x * dt, reverseForce.y * dt, reverseForce.z * dt), true);
         }
       } else {
-        // Natural rolling resistance
+        // Rolling resistance
         if (Math.abs(forwardVel) > 0.1) {
-          const coastForce = forward.clone().multiplyScalar(-Math.sign(forwardVel) * 8.5 * mass);
+          const coastForce = forward.clone().multiplyScalar(-Math.sign(forwardVel) * 8.0 * mass);
           this.body.applyImpulse(new RAPIER.Vector3(coastForce.x * dt, coastForce.y * dt, coastForce.z * dt), true);
         }
       }
@@ -469,10 +491,10 @@ export class Car {
 
         let targetYawRate: number;
         if (Math.abs(forwardVel) < 1.0) {
-          targetYawRate = 4.2; // Pivot turn when stopped
+          targetYawRate = 4.4; // Pivot turn when stopped
         } else {
           const speedFactor = Math.min(1.0, Math.abs(forwardVel) / 28.5);
-          targetYawRate = 4.6 - speedFactor * 1.5;
+          targetYawRate = 4.8 - speedFactor * 1.5;
         }
 
         if (this.isDrifting) {
@@ -481,7 +503,7 @@ export class Car {
 
         const angvel = this.body.angvel();
         const desiredYaw = input.steer * steerDir * targetYawRate;
-        const yawImpulse = (desiredYaw - angvel.y) * 0.6 * mass;
+        const yawImpulse = (desiredYaw - angvel.y) * 0.65 * mass;
 
         this.body.applyTorqueImpulse(new RAPIER.Vector3(0, yawImpulse, 0), true);
       }
@@ -494,15 +516,15 @@ export class Car {
     // ==========================================
     if (!this.isGrounded && !this.isDodging) {
       if (input.throttle !== 0) {
-        const airThrottleForce = forward.clone().multiplyScalar(input.throttle * 2.2 * mass);
+        const airThrottleForce = forward.clone().multiplyScalar(input.throttle * 2.5 * mass);
         this.body.applyImpulse(
           new RAPIER.Vector3(airThrottleForce.x * dt, airThrottleForce.y * dt, airThrottleForce.z * dt),
           true
         );
       }
 
-      const pitchTorque = right.clone().multiplyScalar(input.pitch * 13.0 * mass);
-      const yawTorque = up.clone().multiplyScalar(-input.yaw * 10.0 * mass);
+      const pitchTorque = right.clone().multiplyScalar(input.pitch * 13.5 * mass);
+      const yawTorque = up.clone().multiplyScalar(-input.yaw * 10.5 * mass);
       const rollTorque = forward.clone().multiplyScalar(-input.roll * 38.0 * mass);
 
       const totalTorque = pitchTorque.add(yawTorque).add(rollTorque);
@@ -633,14 +655,20 @@ export class Car {
   }
 
   public getForward(): THREE.Vector3 {
-    return new THREE.Vector3(0, 0, -1).applyQuaternion(this.mesh.quaternion);
+    const r = this.body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    return new THREE.Vector3(0, 0, -1).applyQuaternion(q);
   }
 
   public getUp(): THREE.Vector3 {
-    return new THREE.Vector3(0, 1, 0).applyQuaternion(this.mesh.quaternion);
+    const r = this.body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    return new THREE.Vector3(0, 1, 0).applyQuaternion(q);
   }
 
   public getRight(): THREE.Vector3 {
-    return new THREE.Vector3(1, 0, 0).applyQuaternion(this.mesh.quaternion);
+    const r = this.body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    return new THREE.Vector3(1, 0, 0).applyQuaternion(q);
   }
 }
