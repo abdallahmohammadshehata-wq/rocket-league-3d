@@ -14,8 +14,8 @@ export class Engine {
   private isRunning: boolean = false;
   private lastTime: number = 0;
   private accumulator: number = 0;
-  public readonly fixedDeltaTime: number = 1 / 120; // 120Hz High-Precision Physics step
-  private readonly maxSubsteps: number = 5; // Prevent accumulator spiral-of-death
+  public readonly fixedDeltaTime: number = 1 / 60; // Rock-solid 60Hz physics with alpha interpolation
+  private readonly maxSubsteps: number = 4; // Prevent accumulator lag
 
   private physicsCallbacks: Array<(fixedDeltaTime: number) => void> = [];
   private renderCallbacks: Array<(alpha: number, deltaTime: number) => void> = [];
@@ -31,10 +31,10 @@ export class Engine {
     this.world = new RAPIER.World(gravity);
     this.eventQueue = new RAPIER.EventQueue(true);
 
-    // 2. Initialize Three.js Graphics
+    // 2. Initialize Three.js Graphics (Unreal Engine quality rendering)
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x060913);
-    this.scene.fog = new THREE.FogExp2(0x060913, 0.008);
+    this.scene.background = new THREE.Color(0x050813);
+    this.scene.fog = new THREE.FogExp2(0x050813, 0.007);
 
     const aspect = window.innerWidth / window.innerHeight;
     this.camera = new THREE.PerspectiveCamera(65, aspect, 0.1, 1000);
@@ -42,10 +42,12 @@ export class Engine {
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
-      powerPreference: 'high-performance'
+      powerPreference: 'high-performance',
+      stencil: false,
+      depth: true
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Balanced high-DPI performance
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -62,49 +64,57 @@ export class Engine {
     // 3. Setup Stadium Lighting
     this.setupLighting();
 
-    // 4. Handle Window Resize
+    // 4. Preload 3D Supercar Assets
+    import('../entities/CarModelPresets').then((mod) => mod.preloadFerrariModel());
+
+    // 5. Handle Window Resize
     window.addEventListener('resize', () => this.onWindowResize());
   }
 
   private setupLighting(): void {
     // Ambient stadium glow
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
     this.scene.add(ambientLight);
 
-    // Hemispherical arena light
-    const hemiLight = new THREE.HemisphereLight(0x00d2ff, 0xff7700, 0.5);
-    hemiLight.position.set(0, 45, 0);
+    // Hemispherical arena light (Cyan sky, Warm amber turf bounce)
+    const hemiLight = new THREE.HemisphereLight(0x38bdf8, 0x1e293b, 0.65);
+    hemiLight.position.set(0, 50, 0);
     this.scene.add(hemiLight);
 
-    // 4 Corner Stadium Floodlights with Soft Shadows
-    const floodlightPositions = [
-      { x: -38, y: 34, z: -55, targetX: 0, targetZ: -15 },
-      { x: 38, y: 34, z: -55, targetX: 0, targetZ: -15 },
-      { x: -38, y: 34, z: 55, targetX: 0, targetZ: 15 },
-      { x: 38, y: 34, z: 55, targetX: 0, targetZ: 15 }
-    ];
+    // Primary High-Quality Key Stadium Floodlight (Casts soft high-resolution shadows)
+    const primarySun = new THREE.DirectionalLight(0xffffff, 1.3);
+    primarySun.position.set(35, 42, -45);
+    primarySun.castShadow = true;
+    primarySun.shadow.mapSize.width = 2048;
+    primarySun.shadow.mapSize.height = 2048;
+    primarySun.shadow.camera.near = 0.5;
+    primarySun.shadow.camera.far = 140;
+    primarySun.shadow.camera.left = -50;
+    primarySun.shadow.camera.right = 50;
+    primarySun.shadow.camera.top = 50;
+    primarySun.shadow.camera.bottom = -50;
+    primarySun.shadow.bias = -0.0003;
+    primarySun.shadow.normalBias = 0.02;
+    primarySun.shadow.radius = 2.0;
 
-    floodlightPositions.forEach((pos) => {
-      const dirLight = new THREE.DirectionalLight(0xffffff, 1.05);
-      dirLight.position.set(pos.x, pos.y, pos.z);
-      dirLight.castShadow = true;
-      dirLight.shadow.mapSize.width = 2048;
-      dirLight.shadow.mapSize.height = 2048;
-      dirLight.shadow.camera.near = 0.5;
-      dirLight.shadow.camera.far = 130;
-      dirLight.shadow.camera.left = -48;
-      dirLight.shadow.camera.right = 48;
-      dirLight.shadow.camera.top = 48;
-      dirLight.shadow.camera.bottom = -48;
-      dirLight.shadow.bias = -0.0004;
+    const sunTarget = new THREE.Object3D();
+    sunTarget.position.set(0, 0, 0);
+    this.scene.add(sunTarget);
+    primarySun.target = sunTarget;
+    this.scene.add(primarySun);
 
-      const target = new THREE.Object3D();
-      target.position.set(pos.targetX, 0, pos.targetZ);
-      this.scene.add(target);
-      dirLight.target = target;
+    // Secondary Fill Lights (No expensive shadow map overhead - delivers max 60FPS speed!)
+    const fillLight1 = new THREE.DirectionalLight(0x00d2ff, 0.7);
+    fillLight1.position.set(-38, 34, -55);
+    this.scene.add(fillLight1);
 
-      this.scene.add(dirLight);
-    });
+    const fillLight2 = new THREE.DirectionalLight(0xff7700, 0.7);
+    fillLight2.position.set(38, 34, 55);
+    this.scene.add(fillLight2);
+
+    const fillLight3 = new THREE.DirectionalLight(0xffffff, 0.5);
+    fillLight3.position.set(-38, 34, 55);
+    this.scene.add(fillLight3);
 
     // Colored accent goal spot lights & arena center core
     const blueGoalLight = new THREE.PointLight(0x00d2ff, 6.0, 45, 1.2);

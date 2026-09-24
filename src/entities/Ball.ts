@@ -149,11 +149,25 @@ export class Ball {
     this.scene.add(this.trailLine);
   }
 
+  // Render interpolation transforms
+  public prevPosition: THREE.Vector3 = new THREE.Vector3(0, 3.0, 0);
+  public prevQuaternion: THREE.Quaternion = new THREE.Quaternion();
+  public currPosition: THREE.Vector3 = new THREE.Vector3(0, 3.0, 0);
+  public currQuaternion: THREE.Quaternion = new THREE.Quaternion();
+
+  private static readonly _scratchV = new THREE.Vector3();
+  private static readonly _scratchW = new THREE.Vector3();
+  private static readonly _scratchMagnus = new THREE.Vector3();
+  private static readonly _scratchBaseColor = new THREE.Color();
+
   public reset(kickoffPosition: THREE.Vector3 = new THREE.Vector3(0, 3.0, 0)): void {
     this.body.setTranslation(kickoffPosition, true);
     this.body.setLinvel(new RAPIER.Vector3(0, 0, 0), true);
     this.body.setAngvel(new RAPIER.Vector3(0, 0, 0), true);
+
     this.mesh.position.copy(kickoffPosition);
+    this.prevPosition.copy(kickoffPosition);
+    this.currPosition.copy(kickoffPosition);
     this.trailPoints = [];
   }
 
@@ -174,7 +188,11 @@ export class Ball {
     this.soundManager.playGoal();
   }
 
-  public update(dt: number = 1 / 120): void {
+  public update(dt: number = 1 / 60): void {
+    // 1. Record previous transform
+    this.prevPosition.copy(this.currPosition);
+    this.prevQuaternion.copy(this.currQuaternion);
+
     const pos = this.body.translation();
     const rot = this.body.rotation();
     const vel = this.body.linvel();
@@ -191,17 +209,31 @@ export class Ball {
 
     // Aerodynamic Magnus Effect (Spin Curve in Air)
     if (pos.y > this.radius + 0.5 && speed > 8.0) {
-      const v = new THREE.Vector3(vel.x, vel.y, vel.z);
-      const w = new THREE.Vector3(angvel.x, angvel.y, angvel.z);
-      const magnusForce = new THREE.Vector3().crossVectors(w, v).multiplyScalar(this.magnusCoeff * this.body.mass());
+      Ball._scratchV.set(vel.x, vel.y, vel.z);
+      Ball._scratchW.set(angvel.x, angvel.y, angvel.z);
+      Ball._scratchMagnus.crossVectors(Ball._scratchW, Ball._scratchV).multiplyScalar(this.magnusCoeff * this.body.mass());
       this.body.applyImpulse(
-        new RAPIER.Vector3(magnusForce.x * dt, magnusForce.y * dt, magnusForce.z * dt),
+        new RAPIER.Vector3(Ball._scratchMagnus.x * dt, Ball._scratchMagnus.y * dt, Ball._scratchMagnus.z * dt),
         true
       );
     }
 
-    this.mesh.position.set(pos.x, pos.y, pos.z);
-    this.mesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+    // Update currPosition and currQuaternion
+    this.currPosition.set(pos.x, pos.y, pos.z);
+    this.currQuaternion.set(rot.x, rot.y, rot.z, rot.w);
+  }
+
+  /**
+   * Unreal Engine style transform interpolation for buttery smooth 60/120/144 FPS
+   */
+  public interpolateRender(alpha: number, _dt: number): void {
+    const clampedAlpha = THREE.MathUtils.clamp(alpha, 0, 1);
+    this.mesh.position.lerpVectors(this.prevPosition, this.currPosition, clampedAlpha);
+    this.mesh.quaternion.slerpQuaternions(this.prevQuaternion, this.currQuaternion, clampedAlpha);
+
+    const pos = this.mesh.position;
+    const vel = this.body.linvel();
+    const speed = Math.hypot(vel.x, vel.y, vel.z);
 
     // Dynamic Emissive Glow based on speed
     const speedRatio = Math.min(1.0, speed / 38.0);
@@ -235,15 +267,21 @@ export class Ball {
     const posAttr = this.trailLine.geometry.attributes.position as THREE.BufferAttribute;
     const colAttr = this.trailLine.geometry.attributes.color as THREE.BufferAttribute;
 
-    const baseColor = speedRatio > 0.6 ? new THREE.Color(0xff00cc) : new THREE.Color(0x00e5ff);
+    const baseHex = speedRatio > 0.6 ? 0xff00cc : 0x00e5ff;
+    Ball._scratchBaseColor.setHex(baseHex);
 
     for (let i = 0; i < 32; i++) {
       const pt = this.trailPoints[i] || currentPos;
       posAttr.setXYZ(i, pt.x, pt.y, pt.z);
 
       const fade = Math.max(0, 1 - i / 32) * (speed / 14.0);
-      const c = baseColor.clone().multiplyScalar(Math.min(1.5, fade));
-      colAttr.setXYZ(i, c.r, c.g, c.b);
+      const intensity = Math.min(1.5, fade);
+      colAttr.setXYZ(
+        i,
+        Ball._scratchBaseColor.r * intensity,
+        Ball._scratchBaseColor.g * intensity,
+        Ball._scratchBaseColor.b * intensity
+      );
     }
 
     posAttr.needsUpdate = true;

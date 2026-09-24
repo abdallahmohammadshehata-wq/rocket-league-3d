@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
-export type CarChassisType = 'NFS_M3_GTR' | 'NFS_SKYLINE_R34' | 'NFS_HYPERCAR' | 'OCTANE' | 'DOMINUS' | 'FENNEC';
+export type CarChassisType = 'NFS_M3_GTR' | 'FERRARI_458' | 'NFS_SKYLINE_R34' | 'NFS_HYPERCAR' | 'OCTANE' | 'DOMINUS' | 'FENNEC';
 export type CarTopperType = 'NONE' | 'CROWN' | 'HALO' | 'CYBER_VISOR' | 'WIZARD_HAT' | 'DEVIL_HORNS';
 export type CarDecalType = 'NONE' | 'NFS_HERO_STRIPES' | 'STRIPES' | 'FLAMES' | 'CYBER_GRID' | 'CARBON';
 
@@ -12,6 +14,37 @@ export interface CarCustomization {
   topper: CarTopperType;
   underglowColor: number;
   boostColor: number;
+}
+
+// Cached GLTF Model for Ferrari 458
+let cachedFerrariScene: THREE.Group | null = null;
+let isFerrariLoading = false;
+const onFerrariLoadedCallbacks: Array<(scene: THREE.Group) => void> = [];
+
+export function preloadFerrariModel(): void {
+  if (cachedFerrariScene || isFerrariLoading) return;
+  isFerrariLoading = true;
+
+  const dracoLoader = new DRACOLoader();
+  dracoLoader.setDecoderPath('./draco/');
+
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(dracoLoader);
+
+  loader.load(
+    './models/ferrari.glb',
+    (gltf) => {
+      cachedFerrariScene = gltf.scene;
+      isFerrariLoading = false;
+      onFerrariLoadedCallbacks.forEach((cb) => cb(cachedFerrariScene!));
+      onFerrariLoadedCallbacks.length = 0;
+    },
+    undefined,
+    (err) => {
+      console.warn('Ferrari GLTF failed to load, procedural fallback active:', err);
+      isFerrariLoading = false;
+    }
+  );
 }
 
 // Default Player 1: Iconic Need for Speed Most Wanted BMW M3 GTR
@@ -38,14 +71,15 @@ export const DEFAULT_P2_CUSTOMIZATION: CarCustomization = {
 
 export class CarChassisBuilder {
   /**
-   * Generates AAA-quality 3D Battle-Car models with sleek aerodynamic curves,
+   * Generates AAA Unreal Engine quality 3D Battle-Car models with sleek aerodynamic curves,
    * realistic automotive clearcoat materials, GT wings, multi-spoke BBS/TE37 rims,
    * Brembo brake calipers, side-exit exhausts, and rocket booster thrusters.
    */
   public static buildChassis(
     parentGroup: THREE.Group,
     custom: CarCustomization,
-    isBlueTeam: boolean
+    isBlueTeam: boolean,
+    onRebuildNeeded?: () => void
   ): {
     bodyMesh: THREE.Mesh;
     wheels: THREE.Mesh[];
@@ -337,6 +371,104 @@ export class CarChassisBuilder {
       cannonExhaust.rotation.y = -0.25;
       cannonExhaust.position.set(0.68, 0.22, 1.98);
       parentGroup.add(cannonExhaust);
+
+    } else if (custom.chassis === 'FERRARI_458') {
+      // -----------------------------------------------------------
+      // EXOTIC ITALIAN SUPERCAR (Ferrari 458 / F8 Supercar)
+      // -----------------------------------------------------------
+      if (cachedFerrariScene) {
+        const ferrariClone = cachedFerrariScene.clone(true);
+        ferrariClone.scale.set(0.0094, 0.0094, 0.0094);
+        ferrariClone.position.set(0, 0.08, 0);
+        ferrariClone.rotation.y = Math.PI; // Orient forward towards -Z
+
+        ferrariClone.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const mesh = child as THREE.Mesh;
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            if (mesh.material) {
+              const mat = mesh.material as THREE.MeshStandardMaterial;
+              if (mat.name && (mat.name.toLowerCase().includes('body') || mat.name.toLowerCase().includes('paint') || mat.name.toLowerCase().includes('car'))) {
+                mat.color.setHex(custom.primaryColor);
+                mat.metalness = 0.95;
+                mat.roughness = 0.10;
+              }
+            }
+          }
+        });
+
+        parentGroup.add(ferrariClone);
+        bodyMesh = ferrariClone as any;
+      } else {
+        preloadFerrariModel();
+        if (onRebuildNeeded) {
+          onFerrariLoadedCallbacks.push(() => onRebuildNeeded());
+        }
+
+        // Sleek Italian Supercar Procedural Geometry
+        const bodyShape = new THREE.Shape();
+        bodyShape.moveTo(-2.0, 0.12);
+        bodyShape.lineTo(-1.88, 0.32);
+        bodyShape.lineTo(-1.25, 0.42);
+        bodyShape.lineTo(-0.45, 0.78);
+        bodyShape.lineTo(0.55, 0.78);
+        bodyShape.lineTo(1.42, 0.52);
+        bodyShape.lineTo(1.92, 0.44);
+        bodyShape.lineTo(1.96, 0.18);
+        bodyShape.lineTo(1.5, 0.12);
+        bodyShape.lineTo(-2.0, 0.12);
+
+        const bodyGeo = new THREE.ExtrudeGeometry(bodyShape, { steps: 4, depth: 2.05, bevelEnabled: true, bevelThickness: 0.16, bevelSize: 0.14, bevelSegments: 6 });
+        bodyGeo.center();
+        bodyMesh = new THREE.Mesh(bodyGeo, paintMat);
+        bodyMesh.rotation.y = Math.PI / 2;
+        bodyMesh.position.set(0, 0.52, 0);
+        bodyMesh.castShadow = true;
+        parentGroup.add(bodyMesh);
+
+        // Carbon Aero Diffuser & Triple Center Exhaust
+        const diffuser = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.18, 0.5), carbonMat);
+        diffuser.position.set(0, 0.18, 1.95);
+        parentGroup.add(diffuser);
+
+        [-0.08, 0.0, 0.08].forEach((x) => {
+          const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.05, 0.16, 12), chromeMat);
+          tip.rotation.x = Math.PI / 2;
+          tip.position.set(x, 0.28, 1.98);
+          parentGroup.add(tip);
+        });
+      }
+
+    } else if (custom.chassis === 'NFS_HYPERCAR') {
+      // -----------------------------------------------------------
+      // NEED FOR SPEED: HYPERCAR (Koenigsegg / Pagani Aero Concept)
+      // -----------------------------------------------------------
+      const bodyShape = new THREE.Shape();
+      bodyShape.moveTo(-2.05, 0.10);
+      bodyShape.lineTo(-1.92, 0.30);
+      bodyShape.lineTo(-1.30, 0.40);
+      bodyShape.lineTo(-0.50, 0.74);
+      bodyShape.lineTo(0.50, 0.74);
+      bodyShape.lineTo(1.45, 0.48);
+      bodyShape.lineTo(1.95, 0.40);
+      bodyShape.lineTo(1.98, 0.16);
+      bodyShape.lineTo(1.55, 0.10);
+      bodyShape.lineTo(-2.05, 0.10);
+
+      const bodyGeo = new THREE.ExtrudeGeometry(bodyShape, { steps: 4, depth: 2.1, bevelEnabled: true, bevelThickness: 0.18, bevelSize: 0.15, bevelSegments: 6 });
+      bodyGeo.center();
+      bodyMesh = new THREE.Mesh(bodyGeo, paintMat);
+      bodyMesh.rotation.y = Math.PI / 2;
+      bodyMesh.position.set(0, 0.50, 0);
+      bodyMesh.castShadow = true;
+      parentGroup.add(bodyMesh);
+
+      // Active Aero Wing
+      const activeWing = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.06, 0.5), carbonMat);
+      activeWing.position.set(0, 1.25, 1.6);
+      activeWing.rotation.x = 0.1;
+      parentGroup.add(activeWing);
 
     } else if (custom.chassis === 'DOMINUS') {
       const bodyShape = new THREE.Shape();

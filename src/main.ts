@@ -83,8 +83,8 @@ class Game {
     // 6. Register Physics Update Loop (60Hz fixed timestep)
     this.engine.onPhysicsStep((dt) => this.physicsStep(dt));
 
-    // 7. Register Render Update Loop
-    this.engine.onRenderStep((_alpha, dt) => this.renderStep(dt));
+    // 7. Register Render Update Loop with alpha interpolation
+    this.engine.onRenderStep((alpha, dt) => this.renderStep(alpha, dt));
 
     // 8. Start Initial Mode
     this.setGameMode('VS_AI');
@@ -436,11 +436,18 @@ class Game {
   }
 
 
-  private renderStep(dt: number): void {
-    // 1. Update Cameras
+  private renderStep(alpha: number, dt: number): void {
+    // 1. Interpolate visual transforms for Unreal Engine smoothness (zero physics tick judder)
+    this.playerCar.interpolateRender(alpha, dt);
+    if (this.currentGameMode !== 'FREEPLAY') {
+      this.botCar.interpolateRender(alpha, dt);
+    }
+    this.ball.interpolateRender(alpha, dt);
+
+    // 2. Update Cameras
     this.cameraController.update(dt, this.playerCar, this.botCar, this.ball);
 
-    // 2. Update HUD
+    // 3. Update HUD
     this.hud.updateScoreboard(this.blueScore, this.orangeScore, this.matchTimeRemaining);
     this.hud.updateP1(
       this.playerCar.currentSpeedKmh,

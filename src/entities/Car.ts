@@ -23,6 +23,12 @@ export class Car {
   public isSupersonic: boolean = false;
   public currentSpeedKmh: number = 0;
 
+  // Render interpolation transforms (for buttery smooth 60/120/144 FPS)
+  public prevPosition: THREE.Vector3 = new THREE.Vector3();
+  public prevQuaternion: THREE.Quaternion = new THREE.Quaternion();
+  public currPosition: THREE.Vector3 = new THREE.Vector3();
+  public currQuaternion: THREE.Quaternion = new THREE.Quaternion();
+
   private scene: THREE.Scene;
   private world: RAPIER.World;
   private soundManager: SoundManager;
@@ -66,6 +72,16 @@ export class Car {
   // Ball hit cooldown
   private lastBallHitTime: number = 0;
 
+  // Scratch memory to eliminate GC pauses
+  private static readonly _scratchOrigin = new THREE.Vector3();
+  private static readonly _scratchDown = new THREE.Vector3();
+  private static readonly _scratchAvgNormal = new THREE.Vector3();
+  private static readonly _scratchForward = new THREE.Vector3();
+  private static readonly _scratchUp = new THREE.Vector3();
+  private static readonly _scratchRight = new THREE.Vector3();
+  private static readonly _scratchVel = new THREE.Vector3();
+  private static readonly _scratchImpulse = new THREE.Vector3();
+
   constructor(
     scene: THREE.Scene,
     world: RAPIER.World,
@@ -108,12 +124,24 @@ export class Car {
     const initRotY = isBlueTeam ? Math.PI : 0;
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), initRotY);
     this.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
-    this.mesh.position.set(0, 1.2, isBlueTeam ? -32 : 32);
+
+    const initPos = new THREE.Vector3(0, 1.2, isBlueTeam ? -32 : 32);
+    this.mesh.position.copy(initPos);
     this.mesh.quaternion.copy(q);
+
+    this.prevPosition.copy(initPos);
+    this.prevQuaternion.copy(q);
+    this.currPosition.copy(initPos);
+    this.currQuaternion.copy(q);
   }
 
   public rebuildMesh(): void {
-    const parts = CarChassisBuilder.buildChassis(this.mesh, this.customization, this.isBlueTeam);
+    const parts = CarChassisBuilder.buildChassis(
+      this.mesh,
+      this.customization,
+      this.isBlueTeam,
+      () => this.rebuildMesh()
+    );
     this.bodyMesh = parts.bodyMesh;
     this.wheels = parts.wheels;
     this.wheelHubs = parts.wheelHubs;
@@ -137,7 +165,13 @@ export class Car {
     const rotY = isBlueTeam ? Math.PI : 0;
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY);
     this.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+
     this.mesh.position.copy(kickoffPosition);
+    this.mesh.quaternion.copy(q);
+    this.prevPosition.copy(kickoffPosition);
+    this.prevQuaternion.copy(q);
+    this.currPosition.copy(kickoffPosition);
+    this.currQuaternion.copy(q);
     this.mesh.quaternion.copy(q);
 
     this.boostAmount = 33;
@@ -152,11 +186,9 @@ export class Car {
   }
 
   public update(dt: number, input: InputState): void {
-    // 1. Sync Mesh with RigidBody first
-    const pos = this.body.translation();
-    const rot = this.body.rotation();
-    this.mesh.position.set(pos.x, pos.y, pos.z);
-    this.mesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+    // 1. Record previous transform for smooth render interpolation
+    this.prevPosition.copy(this.currPosition);
+    this.prevQuaternion.copy(this.currQuaternion);
 
     // 2. Ground & Surface Normal Check
     this.checkGroundContact();
@@ -164,13 +196,13 @@ export class Car {
     // 3. Process Driving, Airborne, Dodge, & Boost Physics
     this.handlePhysics(dt, input);
 
-    // 4. Re-sync Mesh after physics impulses
+    // 4. Update current physics transform
     const finalPos = this.body.translation();
     const finalRot = this.body.rotation();
-    this.mesh.position.set(finalPos.x, finalPos.y, finalPos.z);
-    this.mesh.quaternion.set(finalRot.x, finalRot.y, finalRot.z, finalRot.w);
+    this.currPosition.set(finalPos.x, finalPos.y, finalPos.z);
+    this.currQuaternion.set(finalRot.x, finalRot.y, finalRot.z, finalRot.w);
 
-    // 5. Update Wheels, Supersonic FX, & Audio
+    // 5. Update Speed, Supersonic FX, & Audio
     const linvel = this.body.linvel();
     const speed = Math.hypot(linvel.x, linvel.y, linvel.z);
     this.currentSpeedKmh = Math.round(speed * 3.6);
@@ -180,33 +212,16 @@ export class Car {
     this.isSupersonic = this.currentSpeedKmh >= 145 || (this.currentSpeedKmh > 125 && (this.isBoosting || this.isDodging));
     if (this.isSupersonic && !wasSupersonic) {
       this.soundManager.playSonicBoom();
-      this.particleManager.spawnShockwaveRing(this.getPosition(), this.customization.accentColor, 1.8, 28.0);
+      this.particleManager.spawnShockwaveRing(this.currPosition, this.customization.accentColor, 1.8, 28.0);
     }
 
     this.supersonicTrails.forEach((t) => (t.visible = this.isSupersonic));
-
-    // Animate wheels spin rotation based on speed
-    const forwardDirection = this.getForward();
-    const forwardDot = linvel.x * forwardDirection.x + linvel.z * forwardDirection.z;
-    const isMovingForward = forwardDot >= -0.1;
-    const wheelRotSpeed = (speed / 0.5); // v / r rolling angular velocity
-
-    this.wheels.forEach((w) => {
-      w.rotation.x += (isMovingForward ? 1 : -1) * wheelRotSpeed * dt * 1.8;
-    });
-
-    // Steer front wheel hubs smoothly
-    if (this.wheelHubs.length >= 2) {
-      const frontSteer = -this.smoothedSteer * 0.44;
-      this.wheelHubs[0].rotation.y = frontSteer;
-      this.wheelHubs[1].rotation.y = frontSteer;
-    }
 
     // Thruster flame flicker & particle sparks
     if (this.isBoosting && this.thrusterGroup) {
       const flicker = 0.85 + Math.random() * 0.35;
       this.thrusterGroup.scale.set(1, 1, flicker);
-      const exhaustPos = this.getPosition().add(this.getForward().multiplyScalar(-1.8));
+      const exhaustPos = this.currPosition.clone().add(this.getForward().multiplyScalar(-1.8));
       this.particleManager.emitBoostSparks(exhaustPos, this.getForward(), this.isSupersonic);
     }
 
@@ -239,9 +254,37 @@ export class Car {
     this.soundManager.updateEngine(this.currentSpeedKmh, input.throttle);
   }
 
+  /**
+   * Unreal Engine style transform interpolation for high-refresh 60/120/144/240Hz screens
+   */
+  public interpolateRender(alpha: number, dt: number): void {
+    const clampedAlpha = THREE.MathUtils.clamp(alpha, 0, 1);
+    this.mesh.position.lerpVectors(this.prevPosition, this.currPosition, clampedAlpha);
+    this.mesh.quaternion.slerpQuaternions(this.prevQuaternion, this.currQuaternion, clampedAlpha);
+
+    // Animate wheels spin rotation smoothly based on rolling speed
+    const linvel = this.body.linvel();
+    const speed = Math.hypot(linvel.x, linvel.y, linvel.z);
+    const forwardDirection = this.getForward();
+    const forwardDot = linvel.x * forwardDirection.x + linvel.z * forwardDirection.z;
+    const isMovingForward = forwardDot >= -0.1;
+    const wheelRotSpeed = speed / 0.5;
+
+    this.wheels.forEach((w) => {
+      w.rotation.x += (isMovingForward ? 1 : -1) * wheelRotSpeed * dt * 1.8;
+    });
+
+    // Steer front wheel hubs smoothly
+    if (this.wheelHubs.length >= 2) {
+      const frontSteer = -this.smoothedSteer * 0.44;
+      this.wheelHubs[0].rotation.y = frontSteer;
+      this.wheelHubs[1].rotation.y = frontSteer;
+    }
+  }
+
   private checkGroundContact(): void {
-    const carPos = this.mesh.position;
-    const carQuat = this.mesh.quaternion;
+    const carPos = this.currPosition;
+    const carQuat = this.currQuaternion;
 
     // Fail-safe floor detection: stadium floor is strictly at y = 0.0
     // If the car's center is at y <= 1.35, the car is physically grounded on the pitch!
@@ -255,14 +298,14 @@ export class Car {
 
     // Wall & Ramp Raycasting for climbing 45° ramps and vertical arena walls
     let hits = 0;
-    const avgNormal = new THREE.Vector3(0, 0, 0);
-    const downLocal = new THREE.Vector3(0, -1, 0).applyQuaternion(carQuat);
+    Car._scratchAvgNormal.set(0, 0, 0);
+    Car._scratchDown.set(0, -1, 0).applyQuaternion(carQuat);
 
     for (const offset of this.rayOffsets) {
-      const origin = offset.clone().applyQuaternion(carQuat).add(carPos);
+      Car._scratchOrigin.copy(offset).applyQuaternion(carQuat).add(carPos);
       const ray = new RAPIER.Ray(
-        new RAPIER.Vector3(origin.x, origin.y, origin.z),
-        new RAPIER.Vector3(downLocal.x, downLocal.y, downLocal.z)
+        { x: Car._scratchOrigin.x, y: Car._scratchOrigin.y, z: Car._scratchOrigin.z },
+        { x: Car._scratchDown.x, y: Car._scratchDown.y, z: Car._scratchDown.z }
       );
 
       const hit = this.world.castRayAndGetNormal(
@@ -277,13 +320,15 @@ export class Car {
 
       if (hit && hit.timeOfImpact <= this.rayLength) {
         hits++;
-        avgNormal.add(new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z));
+        Car._scratchAvgNormal.x += hit.normal.x;
+        Car._scratchAvgNormal.y += hit.normal.y;
+        Car._scratchAvgNormal.z += hit.normal.z;
       }
     }
 
     if (hits > 0) {
       this.isGrounded = true;
-      this.contactNormal.copy(avgNormal.normalize());
+      this.contactNormal.copy(Car._scratchAvgNormal.normalize());
       this.airTime = 0;
       this.jumpsRemaining = 2;
     } else {
