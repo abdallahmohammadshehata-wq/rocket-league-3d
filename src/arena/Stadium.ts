@@ -193,25 +193,70 @@ export class Stadium {
     });
 
     // -------------------------------------------------------------
-    // 1. VERTICAL PERIMETER WALLS (Mesh + Fixed Rapier Physics Box)
+    // 1. NON-OVERLAPPING OCTAGONAL PERIMETER WALLS
+    // In Rocket League, straight side walls stop before the 45° corner cut
     // -------------------------------------------------------------
-    // Left Wall (X = -halfW)
-    this.createSolidWall(new THREE.Vector3(-halfW, h / 2, 0), new THREE.Vector3(0.6, h, this.length), glassWallMat);
-    // Right Wall (X = +halfW)
-    this.createSolidWall(new THREE.Vector3(halfW, h / 2, 0), new THREE.Vector3(0.6, h, this.length), glassWallMat);
+    const cornerCut = 12.0; // Clean 12-meter 45-degree corner chamfer
+    const straightSideLen = this.length - 2 * cornerCut; // 102.4 - 24 = 78.4
+    const straightBackLen = this.width - 2 * cornerCut;  // 82.0 - 24 = 58.0
+    const cornerDiagonal = cornerCut * Math.SQRT2;       // ~16.97m
 
-    // Blue Back Walls (Z = -halfL)
-    this.createSolidWall(new THREE.Vector3(leftOffsetX, h / 2, -halfL), new THREE.Vector3(sideBackWidth, h, 0.6), glassWallMat);
-    this.createSolidWall(new THREE.Vector3(rightOffsetX, h / 2, -halfL), new THREE.Vector3(sideBackWidth, h, 0.6), glassWallMat);
+    // Left Wall (X = -halfW, Z from -(halfL - cornerCut) to +(halfL - cornerCut))
+    this.createSolidWall(new THREE.Vector3(-halfW, h / 2, 0), new THREE.Vector3(0.6, h, straightSideLen), glassWallMat);
+    // Right Wall (X = +halfW, Z from -(halfL - cornerCut) to +(halfL - cornerCut))
+    this.createSolidWall(new THREE.Vector3(halfW, h / 2, 0), new THREE.Vector3(0.6, h, straightSideLen), glassWallMat);
+
+    // Blue Back Walls (Z = -halfL, X from -(halfW - cornerCut) to +(halfW - cornerCut))
+    const backSegmentW = (straightBackLen - this.goalWidth) / 2; // (58.0 - 17.8) / 2 = 20.1
+    const leftBackCenter = -(this.goalWidth / 2 + backSegmentW / 2); // -18.95
+    const rightBackCenter = +(this.goalWidth / 2 + backSegmentW / 2); // +18.95
+
+    this.createSolidWall(new THREE.Vector3(leftBackCenter, h / 2, -halfL), new THREE.Vector3(backSegmentW, h, 0.6), glassWallMat);
+    this.createSolidWall(new THREE.Vector3(rightBackCenter, h / 2, -halfL), new THREE.Vector3(backSegmentW, h, 0.6), glassWallMat);
     this.createSolidWall(new THREE.Vector3(0, this.goalHeight + goalUpperH / 2, -halfL), new THREE.Vector3(this.goalWidth, goalUpperH, 0.6), glassWallMat);
 
-    // Orange Back Walls (Z = +halfL)
-    this.createSolidWall(new THREE.Vector3(leftOffsetX, h / 2, halfL), new THREE.Vector3(sideBackWidth, h, 0.6), glassWallMat);
-    this.createSolidWall(new THREE.Vector3(rightOffsetX, h / 2, halfL), new THREE.Vector3(sideBackWidth, h, 0.6), glassWallMat);
+    // Orange Back Walls (Z = +halfL, X from -(halfW - cornerCut) to +(halfW - cornerCut))
+    this.createSolidWall(new THREE.Vector3(leftBackCenter, h / 2, halfL), new THREE.Vector3(backSegmentW, h, 0.6), glassWallMat);
+    this.createSolidWall(new THREE.Vector3(rightBackCenter, h / 2, halfL), new THREE.Vector3(backSegmentW, h, 0.6), glassWallMat);
     this.createSolidWall(new THREE.Vector3(0, this.goalHeight + goalUpperH / 2, halfL), new THREE.Vector3(this.goalWidth, goalUpperH, 0.6), glassWallMat);
 
     // -------------------------------------------------------------
-    // 2. CEILING (Wireframe Mesh + Top Solid Collider)
+    // 2. SEAMLESS 45-DEGREE ARENA CORNER WALLS (Octagon Chamfers)
+    // -------------------------------------------------------------
+    const cornerCenterX = halfW - cornerCut / 2; // 35.0
+    const cornerCenterZ = halfL - cornerCut / 2; // 45.2
+
+    // Corner 1: Blue Left (-X, -Z)
+    this.createAngledRamp(
+      new THREE.Vector3(-cornerCenterX, h / 2, -cornerCenterZ),
+      new THREE.Euler(0, -Math.PI / 4, 0),
+      new THREE.Vector3(cornerDiagonal, h, 0.6),
+      glassWallMat
+    );
+    // Corner 2: Blue Right (+X, -Z)
+    this.createAngledRamp(
+      new THREE.Vector3(cornerCenterX, h / 2, -cornerCenterZ),
+      new THREE.Euler(0, Math.PI / 4, 0),
+      new THREE.Vector3(cornerDiagonal, h, 0.6),
+      glassWallMat
+    );
+    // Corner 3: Orange Left (-X, +Z)
+    this.createAngledRamp(
+      new THREE.Vector3(-cornerCenterX, h / 2, cornerCenterZ),
+      new THREE.Euler(0, Math.PI / 4, 0),
+      new THREE.Vector3(cornerDiagonal, h, 0.6),
+      glassWallMat
+    );
+    // Corner 4: Orange Right (+X, +Z)
+    this.createAngledRamp(
+      new THREE.Vector3(cornerCenterX, h / 2, cornerCenterZ),
+      new THREE.Euler(0, -Math.PI / 4, 0),
+      new THREE.Vector3(cornerDiagonal, h, 0.6),
+      glassWallMat
+    );
+
+    // -------------------------------------------------------------
+    // 3. CEILING (Wireframe Mesh + Top Solid Collider)
     // -------------------------------------------------------------
     const ceilGeo = new THREE.PlaneGeometry(this.width, this.length);
     const ceilMat = new THREE.MeshBasicMaterial({
@@ -229,89 +274,86 @@ export class Stadium {
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(halfW + 5, 0.5, halfL + 5).setRestitution(0.4), ceilBody);
 
     // -------------------------------------------------------------
-    // 3. 45-DEGREE SMOOTH WALL RAMPS (Accurate, non-intersecting!)
+    // 4. 45-DEGREE FLOOR-TO-WALL RAMPS (Non-overlapping, perfectly smooth)
     // -------------------------------------------------------------
-    const rampWidth = 3.6;
+    const rampWidth = 3.2;
     const rampHalf = rampWidth / 2;
-    const rampThick = 0.3;
+    const rampThick = 0.25;
+    const rampY = rampHalf * 0.707;
+    const rampOffset = rampHalf * 0.707;
 
-    // Left Wall Ramp (Runs along Z: -50 to +50 at X = -30)
+    // Left Side Ramp
     this.createAngledRamp(
-      new THREE.Vector3(-halfW + rampHalf * 0.707, rampHalf * 0.707, 0),
+      new THREE.Vector3(-halfW + rampOffset, rampY, 0),
       new THREE.Euler(0, 0, -Math.PI / 4),
-      new THREE.Vector3(rampWidth, rampThick, this.length),
+      new THREE.Vector3(rampWidth, rampThick, straightSideLen),
       rampMat
     );
-
-    // Right Wall Ramp (Runs along Z: -50 to +50 at X = +30)
+    // Right Side Ramp
     this.createAngledRamp(
-      new THREE.Vector3(halfW - rampHalf * 0.707, rampHalf * 0.707, 0),
+      new THREE.Vector3(halfW - rampOffset, rampY, 0),
       new THREE.Euler(0, 0, Math.PI / 4),
-      new THREE.Vector3(rampWidth, rampThick, this.length),
+      new THREE.Vector3(rampWidth, rampThick, straightSideLen),
       rampMat
     );
 
-    // Blue Back Wall Ramps (Runs along X at Z = -50)
+    // Blue Back Wall Ramps (Left and Right of Goal)
     this.createAngledRamp(
-      new THREE.Vector3(leftOffsetX, rampHalf * 0.707, -halfL + rampHalf * 0.707),
+      new THREE.Vector3(leftBackCenter, rampY, -halfL + rampOffset),
       new THREE.Euler(Math.PI / 4, 0, 0),
-      new THREE.Vector3(sideBackWidth, rampThick, rampWidth),
+      new THREE.Vector3(backSegmentW, rampThick, rampWidth),
       rampMat
     );
     this.createAngledRamp(
-      new THREE.Vector3(rightOffsetX, rampHalf * 0.707, -halfL + rampHalf * 0.707),
+      new THREE.Vector3(rightBackCenter, rampY, -halfL + rampOffset),
       new THREE.Euler(Math.PI / 4, 0, 0),
-      new THREE.Vector3(sideBackWidth, rampThick, rampWidth),
+      new THREE.Vector3(backSegmentW, rampThick, rampWidth),
       rampMat
     );
 
-    // Orange Back Wall Ramps (Runs along X at Z = +50)
+    // Orange Back Wall Ramps (Left and Right of Goal)
     this.createAngledRamp(
-      new THREE.Vector3(leftOffsetX, rampHalf * 0.707, halfL - rampHalf * 0.707),
+      new THREE.Vector3(leftBackCenter, rampY, halfL - rampOffset),
       new THREE.Euler(-Math.PI / 4, 0, 0),
-      new THREE.Vector3(sideBackWidth, rampThick, rampWidth),
+      new THREE.Vector3(backSegmentW, rampThick, rampWidth),
       rampMat
     );
     this.createAngledRamp(
-      new THREE.Vector3(rightOffsetX, rampHalf * 0.707, halfL - rampHalf * 0.707),
+      new THREE.Vector3(rightBackCenter, rampY, halfL - rampOffset),
       new THREE.Euler(-Math.PI / 4, 0, 0),
-      new THREE.Vector3(sideBackWidth, rampThick, rampWidth),
+      new THREE.Vector3(backSegmentW, rampThick, rampWidth),
       rampMat
     );
 
-    // -------------------------------------------------------------
-    // 4. 45-DEGREE ARENA CORNER WALLS (Rocket League Octagonal Arenas)
-    // -------------------------------------------------------------
-    const cornerCut = 9.0;
-    const cornerW = cornerCut * 1.414;
-
-    // Corner 1: Blue Left (-X, -Z)
+    // Corner Floor Ramps (Seamless Compound 45° Chamfers)
+    const cornerRampOffset = rampOffset * 1.414;
+    // Corner 1: Blue Left
     this.createAngledRamp(
-      new THREE.Vector3(-halfW + cornerCut / 2, h / 2, -halfL + cornerCut / 2),
-      new THREE.Euler(0, -Math.PI / 4, 0),
-      new THREE.Vector3(cornerW, h, 0.6),
-      glassWallMat
+      new THREE.Vector3(-cornerCenterX + cornerRampOffset, rampY, -cornerCenterZ + cornerRampOffset),
+      new THREE.Euler(Math.PI / 5.6, -Math.PI / 4, 0),
+      new THREE.Vector3(cornerDiagonal, rampThick, rampWidth),
+      rampMat
     );
-    // Corner 2: Blue Right (+X, -Z)
+    // Corner 2: Blue Right
     this.createAngledRamp(
-      new THREE.Vector3(halfW - cornerCut / 2, h / 2, -halfL + cornerCut / 2),
-      new THREE.Euler(0, Math.PI / 4, 0),
-      new THREE.Vector3(cornerW, h, 0.6),
-      glassWallMat
+      new THREE.Vector3(cornerCenterX - cornerRampOffset, rampY, -cornerCenterZ + cornerRampOffset),
+      new THREE.Euler(Math.PI / 5.6, Math.PI / 4, 0),
+      new THREE.Vector3(cornerDiagonal, rampThick, rampWidth),
+      rampMat
     );
-    // Corner 3: Orange Left (-X, +Z)
+    // Corner 3: Orange Left
     this.createAngledRamp(
-      new THREE.Vector3(-halfW + cornerCut / 2, h / 2, halfL - cornerCut / 2),
-      new THREE.Euler(0, Math.PI / 4, 0),
-      new THREE.Vector3(cornerW, h, 0.6),
-      glassWallMat
+      new THREE.Vector3(-cornerCenterX + cornerRampOffset, rampY, cornerCenterZ - cornerRampOffset),
+      new THREE.Euler(-Math.PI / 5.6, Math.PI / 4, 0),
+      new THREE.Vector3(cornerDiagonal, rampThick, rampWidth),
+      rampMat
     );
-    // Corner 4: Orange Right (+X, +Z)
+    // Corner 4: Orange Right
     this.createAngledRamp(
-      new THREE.Vector3(halfW - cornerCut / 2, h / 2, halfL - cornerCut / 2),
-      new THREE.Euler(0, -Math.PI / 4, 0),
-      new THREE.Vector3(cornerW, h, 0.6),
-      glassWallMat
+      new THREE.Vector3(cornerCenterX - cornerRampOffset, rampY, cornerCenterZ - cornerRampOffset),
+      new THREE.Euler(-Math.PI / 5.6, -Math.PI / 4, 0),
+      new THREE.Vector3(cornerDiagonal, rampThick, rampWidth),
+      rampMat
     );
 
     // Glowing Neon Perimeter Border Trim

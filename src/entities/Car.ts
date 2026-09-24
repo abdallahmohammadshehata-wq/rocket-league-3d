@@ -41,6 +41,7 @@ export class Car {
   private isJumpHolding: boolean = false;
   private jumpHoldTimer: number = 0;
   private readonly maxJumpHoldTime: number = 0.20;
+  private smoothedSteer: number = 0;
 
   // Mesh & Visual Components
   private bodyMesh!: THREE.Mesh;
@@ -472,25 +473,38 @@ export class Car {
         }
       }
 
-      // 3D. Steering & Direct Angular Yaw Control (Need For Speed / Rocket League responsive handling)
-      if (input.steer !== 0) {
+      // 3D. Progressive Steering & Damped Dynamic Yaw
+      // Smooth input to prevent jarring instant jerk
+      this.smoothedSteer = THREE.MathUtils.damp(this.smoothedSteer, input.steer, 14.0, dt);
+
+      if (Math.abs(this.smoothedSteer) > 0.01) {
         const isReversing = forwardVel < -0.3;
         const steerDir = isReversing ? 1 : -1;
         const speedRatio = Math.min(1.0, Math.abs(forwardVel) / 28.5);
-        // Instant crisp yaw rate at all speeds: pivot turn when stopped, snappy high-speed turning
-        const baseTurnRate = Math.abs(forwardVel) < 0.6 ? 5.2 : (4.8 - speedRatio * 1.3);
-        const turnMultiplier = this.isDrifting ? 1.85 : 1.0;
-        const desiredYaw = input.steer * steerDir * baseTurnRate * turnMultiplier;
+
+        // Balanced progressive turning rate (Rocket League Octane standard: ~3.2 rad/s at speed)
+        let baseTurnRate: number;
+        if (Math.abs(forwardVel) < 0.5) {
+          baseTurnRate = 3.6; // Controlled pivot turn when stationary
+        } else {
+          baseTurnRate = 3.2 - speedRatio * 0.9; // Stable high-speed arcs
+        }
+
+        // Drift (Powerslide) gives controlled tail-out angle without spinning out uncontrollably
+        const driftBoost = this.isDrifting ? 1.45 : 1.0;
+        const targetYaw = this.smoothedSteer * steerDir * baseTurnRate * driftBoost;
 
         const curAng = this.body.angvel();
-        this.body.setAngvel(new RAPIER.Vector3(curAng.x, desiredYaw, curAng.z), true);
+        const smoothedYaw = THREE.MathUtils.damp(curAng.y, targetYaw, 16.0, dt);
+        this.body.setAngvel(new RAPIER.Vector3(curAng.x, smoothedYaw, curAng.z), true);
       } else if (this.isGrounded) {
-        // Smoothly stabilize rotation when steering key is released
+        // Natural rotation damping when steering is released
         const curAng = this.body.angvel();
-        this.body.setAngvel(new RAPIER.Vector3(curAng.x, curAng.y * 0.45, curAng.z), true);
+        const dampYaw = THREE.MathUtils.damp(curAng.y, 0, 18.0, dt);
+        this.body.setAngvel(new RAPIER.Vector3(curAng.x, dampYaw, curAng.z), true);
       }
 
-      // 3E. Velocity Heading Redirection & Lateral Grip
+      // 3E. Velocity Heading Redirection & Progressive Lateral Tire Grip
       this.isDrifting = input.handbrake && Math.abs(input.steer) > 0.05;
       this.soundManager.setDriftActive(this.isDrifting && speed > 5);
 
@@ -500,8 +514,8 @@ export class Car {
         const targetForward = forward.clone().setY(0).normalize();
         const targetLinvel = targetForward.multiplyScalar(Math.sign(forwardVel) * horizSpeed);
 
-        // Responsive tire grip aligns momentum with car heading instantly
-        const steerGripRate = this.isDrifting ? 7.0 : 26.0;
+        // Smooth tire grip rate: normal driving is planted and predictable (14.0), drift has subtle slip (4.8)
+        const steerGripRate = this.isDrifting ? 4.8 : 14.0;
         const blend = Math.min(1.0, dt * steerGripRate);
         const newVx = THREE.MathUtils.lerp(curLinvel.x, targetLinvel.x, blend);
         const newVz = THREE.MathUtils.lerp(curLinvel.z, targetLinvel.z, blend);
