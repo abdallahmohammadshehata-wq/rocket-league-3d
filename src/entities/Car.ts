@@ -30,14 +30,17 @@ export class Car {
   public readonly isBlueTeam: boolean;
   public customization: CarCustomization;
 
-  // Jump & Dodge State
+  // Jump & Dodge State (Calibrated to official Rocket League timing)
   private airTime: number = 0;
   private jumpsRemaining: number = 2;
   private isDodging: boolean = false;
   private dodgeTimer: number = 0;
-  private readonly dodgeDuration: number = 0.5;
+  private readonly dodgeDuration: number = 0.5; // 500ms dodge duration
   private dodgeAxis: THREE.Vector3 = new THREE.Vector3();
   private dodgeStartRotation: THREE.Quaternion = new THREE.Quaternion();
+  private isJumpHolding: boolean = false;
+  private jumpHoldTimer: number = 0;
+  private readonly maxJumpHoldTime: number = 0.20; // 200ms jump hold bonus window
 
   // Mesh & Visual Components
   private bodyMesh!: THREE.Mesh;
@@ -56,7 +59,7 @@ export class Car {
     new THREE.Vector3(-0.95, -0.1, 1.6),  // Rear Left
     new THREE.Vector3(0.95, -0.1, 1.6)    // Rear Right
   ];
-  private readonly rayLength: number = 1.35;
+  private readonly rayLength: number = 1.38;
   private contactNormal: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
 
   // Ball hit cooldown to avoid multi-hits on a single contact
@@ -86,15 +89,15 @@ export class Car {
     // 2. Rapier RigidBody
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(0, 2.0, isBlueTeam ? -32 : 32)
-      .setLinearDamping(0.12)
-      .setAngularDamping(2.5)
+      .setLinearDamping(0.08)
+      .setAngularDamping(2.2)
       .setCcdEnabled(true);
 
     this.body = world.createRigidBody(bodyDesc);
 
     // Chassis Box Collider (Width: 2.1m, Height: 1.1m, Length: 4.0m)
     const colliderDesc = RAPIER.ColliderDesc.cuboid(1.05, 0.55, 2.0)
-      .setMass(120.0) // Calibrated 120kg mass for perfect impulse scaling
+      .setMass(120.0) // Calibrated 120kg mass for realistic impulse transfer
       .setFriction(0.65)
       .setRestitution(0.12);
 
@@ -136,13 +139,15 @@ export class Car {
     this.isDodging = false;
     this.isGrounded = true;
     this.isSupersonic = false;
+    this.isJumpHolding = false;
+    this.jumpHoldTimer = 0;
     this.airTime = 0;
     this.jumpsRemaining = 2;
     if (this.thrusterGroup) this.thrusterGroup.visible = false;
   }
 
   public update(dt: number, input: InputState): void {
-    // 1. Raycast Ground Contact Check
+    // 1. Raycast Ground / Wall / Ceiling Contact Check
     this.checkGroundContact();
 
     // 2. Process Driving, Airborne, Dodge, & Boost Physics
@@ -159,24 +164,24 @@ export class Car {
     const speed = Math.hypot(linvel.x, linvel.y, linvel.z);
     this.currentSpeedKmh = Math.round(speed * 3.6);
 
-    // Supersonic Threshold (> 80 km/h with active boost or dodge)
+    // Supersonic Threshold (> 150 km/h / ~42 m/s with active boost or dodge)
     const wasSupersonic = this.isSupersonic;
-    this.isSupersonic = this.currentSpeedKmh > 78 && (this.isBoosting || this.isDodging || speed > 22.5);
+    this.isSupersonic = this.currentSpeedKmh >= 150 || (this.currentSpeedKmh > 130 && (this.isBoosting || this.isDodging));
     if (this.isSupersonic && !wasSupersonic) {
       this.soundManager.playSonicBoom();
-      this.particleManager.spawnShockwaveRing(this.getPosition(), this.customization.accentColor, 1.8, 26.0);
+      this.particleManager.spawnShockwaveRing(this.getPosition(), this.customization.accentColor, 1.8, 28.0);
     }
 
     this.supersonicTrails.forEach((t) => (t.visible = this.isSupersonic));
 
     // Animate wheels rotation
     this.wheels.forEach((w) => {
-      w.rotation.x += speed * dt * (input.throttle >= 0 ? 2.0 : -2.0);
+      w.rotation.x += speed * dt * (input.throttle >= 0 ? 2.2 : -2.2);
     });
 
     // Steer front wheel hubs
     if (this.wheelHubs.length >= 2) {
-      const frontSteer = -input.steer * 0.45;
+      const frontSteer = -input.steer * 0.42;
       this.wheelHubs[0].rotation.y = frontSteer;
       this.wheelHubs[1].rotation.y = frontSteer;
     }
@@ -267,20 +272,28 @@ export class Car {
 
     const linvel = this.body.linvel();
     const currentVel = new THREE.Vector3(linvel.x, linvel.y, linvel.z);
+    const speed = currentVel.length();
     const mass = this.body.mass();
 
     // ==========================================
-    // 1. ROCKET BOOST
+    // 1. ROCKET BOOST (Authentic RL Acceleration)
     // ==========================================
     if (input.boost && this.boostAmount > 0) {
       this.isBoosting = true;
-      this.boostAmount = Math.max(0, this.boostAmount - dt * 33.3);
+      this.boostAmount = Math.max(0, this.boostAmount - dt * 33.3); // 3 seconds of full boost from 100
 
-      const boostForce = forward.clone().multiplyScalar(42.0 * mass);
-      this.body.applyImpulse(
-        new RAPIER.Vector3(boostForce.x * dt, boostForce.y * dt, boostForce.z * dt),
-        true
-      );
+      // In RL, boost provides ~20 m/s² (1058 uu/s²) forward thrust
+      const maxBoostSpeed = 46.0; // ~165 km/h max boost terminal speed
+      const forwardSpeed = currentVel.dot(forward);
+
+      if (forwardSpeed < maxBoostSpeed) {
+        const boostAcc = this.isGrounded ? 21.0 : 22.5;
+        const boostForce = forward.clone().multiplyScalar(boostAcc * mass);
+        this.body.applyImpulse(
+          new RAPIER.Vector3(boostForce.x * dt, boostForce.y * dt, boostForce.z * dt),
+          true
+        );
+      }
 
       if (this.thrusterGroup) this.thrusterGroup.visible = true;
       this.soundManager.setBoostActive(true);
@@ -297,6 +310,7 @@ export class Car {
       this.airTime += dt;
     }
 
+    // 2A. Active Dodge / Flip Rotation & Impulse
     if (this.isDodging) {
       this.dodgeTimer += dt;
       const progress = Math.min(this.dodgeTimer / this.dodgeDuration, 1.0);
@@ -310,58 +324,80 @@ export class Car {
       if (progress >= 1.0) {
         this.isDodging = false;
       }
-    } else if (input.jumpJustPressed) {
-      if (this.isGrounded) {
-        // Ground Jump: crisp pop off surface
-        const jumpImpulse = up.clone().multiplyScalar(8.2 * mass);
-        this.body.applyImpulse(
-          new RAPIER.Vector3(jumpImpulse.x, jumpImpulse.y, jumpImpulse.z),
-          true
-        );
-        this.jumpsRemaining = 1;
-        this.soundManager.playJump();
-      } else if (this.jumpsRemaining > 0 && this.airTime < 1.6) {
-        // Airborne Flip / Dodge
-        const hasDirection = Math.abs(input.throttle) > 0.1 || Math.abs(input.steer) > 0.1;
-
-        if (hasDirection) {
-          this.isDodging = true;
-          this.dodgeTimer = 0;
-          this.dodgeStartRotation.copy(this.mesh.quaternion);
-
-          const dodgeDir = new THREE.Vector3();
-          if (input.throttle > 0.1) dodgeDir.add(forward);
-          if (input.throttle < -0.1) dodgeDir.add(forward.clone().negate());
-          if (input.steer > 0.1) dodgeDir.add(right);
-          if (input.steer < -0.1) dodgeDir.add(right.clone().negate());
-          dodgeDir.normalize();
-
-          this.dodgeAxis.crossVectors(up, dodgeDir).normalize();
-
-          // Cancel downward vertical velocity
-          const curV = this.body.linvel();
-          this.body.setLinvel(new RAPIER.Vector3(curV.x, Math.max(curV.y, 1.0), curV.z), true);
-
-          // Powerful directional dodge impulse
-          const dodgeImpulse = dodgeDir.multiplyScalar(16.0 * mass);
+    } else {
+      // 2B. Variable Jump Hold Bonus (Upward acceleration during the first 200ms of jump)
+      if (this.isJumpHolding) {
+        if (input.jump && this.jumpHoldTimer < this.maxJumpHoldTime) {
+          this.jumpHoldTimer += dt;
+          // RL Jump Hold provides +29.16 m/s² (1458.33 uu/s²) upward acceleration
+          const holdForce = up.clone().multiplyScalar(29.2 * mass);
           this.body.applyImpulse(
-            new RAPIER.Vector3(dodgeImpulse.x, dodgeImpulse.y, dodgeImpulse.z),
+            new RAPIER.Vector3(holdForce.x * dt, holdForce.y * dt, holdForce.z * dt),
             true
           );
-
-          this.soundManager.playDodge();
-          this.particleManager.spawnShockwaveRing(this.getPosition(), this.customization.accentColor, 1.8, 22.0);
         } else {
-          // Neutral Double Jump
-          const doubleJumpImpulse = up.clone().multiplyScalar(7.5 * mass);
+          this.isJumpHolding = false;
+        }
+      }
+
+      // 2C. Jump Button Pressed Trigger
+      if (input.jumpJustPressed) {
+        if (this.isGrounded) {
+          // Ground Jump: crisp initial pop off surface (~5.85 m/s)
+          const jumpImpulse = up.clone().multiplyScalar(5.85 * mass);
           this.body.applyImpulse(
-            new RAPIER.Vector3(doubleJumpImpulse.x, doubleJumpImpulse.y, doubleJumpImpulse.z),
+            new RAPIER.Vector3(jumpImpulse.x, jumpImpulse.y, jumpImpulse.z),
             true
           );
+          this.jumpsRemaining = 1;
+          this.isJumpHolding = true;
+          this.jumpHoldTimer = 0;
           this.soundManager.playJump();
-        }
+        } else if (this.jumpsRemaining > 0 && this.airTime < 1.45) {
+          // In-Air Second Action: Directional Dodge or Neutral Double Jump
+          const hasDirection = Math.abs(input.throttle) > 0.1 || Math.abs(input.steer) > 0.1;
 
-        this.jumpsRemaining = 0;
+          if (hasDirection) {
+            // Directional Flip / Dodge
+            this.isDodging = true;
+            this.dodgeTimer = 0;
+            this.dodgeStartRotation.copy(this.mesh.quaternion);
+
+            const dodgeDir = new THREE.Vector3();
+            if (input.throttle > 0.1) dodgeDir.add(forward.clone().multiplyScalar(input.throttle));
+            if (input.throttle < -0.1) dodgeDir.add(forward.clone().multiplyScalar(input.throttle));
+            if (input.steer > 0.1) dodgeDir.add(right.clone().multiplyScalar(input.steer));
+            if (input.steer < -0.1) dodgeDir.add(right.clone().multiplyScalar(input.steer));
+            dodgeDir.normalize();
+
+            // Rotation axis perpendicular to Up and dodge direction
+            this.dodgeAxis.crossVectors(up, dodgeDir).normalize();
+
+            // Cancel falling vertical velocity and give slight upward cushion
+            const curV = this.body.linvel();
+            this.body.setLinvel(new RAPIER.Vector3(curV.x, Math.max(curV.y, 0) + 1.2, curV.z), true);
+
+            // Explosive directional dodge impulse (+10.5 m/s / ~500 uu/s in RL)
+            const dodgeImpulse = dodgeDir.multiplyScalar(10.5 * mass);
+            this.body.applyImpulse(
+              new RAPIER.Vector3(dodgeImpulse.x, dodgeImpulse.y, dodgeImpulse.z),
+              true
+            );
+
+            this.soundManager.playDodge();
+            this.particleManager.spawnShockwaveRing(this.getPosition(), this.customization.accentColor, 1.8, 24.0);
+          } else {
+            // Neutral Double Jump (+5.85 m/s upward pop)
+            const doubleJumpImpulse = up.clone().multiplyScalar(5.85 * mass);
+            this.body.applyImpulse(
+              new RAPIER.Vector3(doubleJumpImpulse.x, doubleJumpImpulse.y, doubleJumpImpulse.z),
+              true
+            );
+            this.soundManager.playJump();
+          }
+
+          this.jumpsRemaining = 0;
+        }
       }
     }
 
@@ -369,19 +405,20 @@ export class Car {
     // 3. GROUNDED DRIVING & REVERSE
     // ==========================================
     if (this.isGrounded && !this.isDodging) {
-      // Sticky Downforce (keeps car glued to floor & curved walls)
-      const downforce = this.contactNormal.clone().multiplyScalar(-22.0 * mass);
+      // 3A. Sticky Downforce (keeps car glued to floor & curved 45° ramps/walls)
+      // RL applies 6.5 m/s² sticky normal force towards the surface
+      const stickyForce = this.contactNormal.clone().multiplyScalar(-6.5 * mass);
       this.body.applyImpulse(
-        new RAPIER.Vector3(downforce.x * dt, downforce.y * dt, downforce.z * dt),
+        new RAPIER.Vector3(stickyForce.x * dt, stickyForce.y * dt, stickyForce.z * dt),
         true
       );
 
-      // Smooth surface normal alignment
+      // 3B. Surface Normal Alignment Torque (smoothly orient car with wall/ramp slope)
       const currentUp = up.clone();
       const alignAxis = new THREE.Vector3().crossVectors(currentUp, this.contactNormal);
       const alignAngle = currentUp.angleTo(this.contactNormal);
-      if (alignAngle > 0.04) {
-        const alignTorque = alignAxis.normalize().multiplyScalar(alignAngle * 12.0 * mass);
+      if (alignAngle > 0.03) {
+        const alignTorque = alignAxis.normalize().multiplyScalar(alignAngle * 14.0 * mass);
         this.body.applyTorqueImpulse(
           new RAPIER.Vector3(alignTorque.x * dt, alignTorque.y * dt, alignTorque.z * dt),
           true
@@ -389,70 +426,73 @@ export class Car {
       }
 
       const forwardVel = currentVel.dot(forward);
-      const maxForwardSpeed = 38.0; // ~137 km/h without boost
-      const maxReverseSpeed = -20.0; // ~72 km/h
+      const maxDriveSpeed = 28.2; // ~101.5 km/h (1410 uu/s in RL)
+      const maxReverseSpeed = -18.0; // ~65 km/h
 
-      // Acceleration & Braking
+      // 3C. Authentic Non-Linear Drive Acceleration Curve
       if (input.throttle > 0) {
         if (forwardVel < -0.5) {
-          // Braking while in reverse
-          const brakeForce = forward.clone().multiplyScalar(45.0 * mass);
+          // Braking while reversing (strong 70 m/s² braking deceleration)
+          const brakeForce = forward.clone().multiplyScalar(70.0 * mass);
           this.body.applyImpulse(new RAPIER.Vector3(brakeForce.x * dt, brakeForce.y * dt, brakeForce.z * dt), true);
-        } else if (forwardVel < maxForwardSpeed) {
-          // Drive Forward
-          const driveForce = forward.clone().multiplyScalar(32.0 * mass * input.throttle);
+        } else if (forwardVel < maxDriveSpeed) {
+          // RL Drive Force Curve: a(v) = 16.0 * (1.0 - v / 28.2) m/s²
+          const driveAcc = 16.0 * Math.max(0.12, 1.0 - forwardVel / maxDriveSpeed);
+          const driveForce = forward.clone().multiplyScalar(driveAcc * mass * input.throttle);
           this.body.applyImpulse(new RAPIER.Vector3(driveForce.x * dt, driveForce.y * dt, driveForce.z * dt), true);
         }
       } else if (input.throttle < 0) {
         if (forwardVel > 0.5) {
-          // Braking while driving forward
-          const brakeForce = forward.clone().multiplyScalar(-45.0 * mass);
+          // Braking while going forward (strong 70 m/s² braking deceleration)
+          const brakeForce = forward.clone().multiplyScalar(-70.0 * mass);
           this.body.applyImpulse(new RAPIER.Vector3(brakeForce.x * dt, brakeForce.y * dt, brakeForce.z * dt), true);
         } else if (forwardVel > maxReverseSpeed) {
-          // Reverse
-          const reverseForce = forward.clone().multiplyScalar(22.0 * mass * input.throttle);
+          // Reverse Drive (15 m/s² acceleration)
+          const reverseForce = forward.clone().multiplyScalar(15.0 * mass * input.throttle);
           this.body.applyImpulse(new RAPIER.Vector3(reverseForce.x * dt, reverseForce.y * dt, reverseForce.z * dt), true);
         }
       } else {
-        // Natural rolling resistance
-        if (Math.abs(forwardVel) > 0.2) {
-          const frictionForce = forward.clone().multiplyScalar(-forwardVel * 2.2 * mass);
-          this.body.applyImpulse(new RAPIER.Vector3(frictionForce.x * dt, frictionForce.y * dt, frictionForce.z * dt), true);
+        // Natural rolling resistance (10.5 m/s² coasting deceleration)
+        if (Math.abs(forwardVel) > 0.15) {
+          const coastForce = forward.clone().multiplyScalar(-Math.sign(forwardVel) * 10.5 * mass);
+          this.body.applyImpulse(new RAPIER.Vector3(coastForce.x * dt, coastForce.y * dt, coastForce.z * dt), true);
         }
       }
 
-      // Handbrake / Drift vs Lateral Grip
-      this.isDrifting = input.handbrake && Math.abs(input.steer) > 0.1;
-      this.soundManager.setDriftActive(this.isDrifting && currentVel.length() > 5);
+      // 3D. Lateral Grip & Powerslide / Drift Handling
+      this.isDrifting = input.handbrake && Math.abs(input.steer) > 0.05;
+      this.soundManager.setDriftActive(this.isDrifting && speed > 5);
 
       const lateralVel = currentVel.dot(right);
-      const gripFactor = this.isDrifting ? 0.35 : 0.94;
-      const lateralImpulse = right.clone().multiplyScalar(-lateralVel * gripFactor * mass * dt);
+      // High lateral grip (0.95) for crisp steering, low grip (0.22) during drift powerslide
+      const gripFactor = this.isDrifting ? 0.22 : 0.95;
+      const lateralImpulse = right.clone().multiplyScalar(-lateralVel * gripFactor * mass * dt * 60.0);
       this.body.applyImpulse(
         new RAPIER.Vector3(lateralImpulse.x, lateralImpulse.y, lateralImpulse.z),
         true
       );
 
-      // Steering: Smooth & Direct Angular Velocity Control
+      // 3E. Speed-Dependent Steering Curvature
       if (input.steer !== 0) {
-        const isReversing = forwardVel < -0.4;
+        const isReversing = forwardVel < -0.3;
         const steerDir = isReversing ? 1 : -1;
-        
-        let targetYawSpeed: number;
+
+        let targetYawRate: number;
         if (Math.abs(forwardVel) < 1.0) {
-          targetYawSpeed = 3.6; // Stationary turn
+          targetYawRate = 3.8; // Pivot turn when nearly stopped
         } else {
-          const speedRatio = Math.min(1.0, Math.abs(forwardVel) / 26.0);
-          targetYawSpeed = 4.2 - speedRatio * 1.4; // 4.2 -> 2.8 at max speed
+          // Tighter turning radius at slow speeds, smoothly widening at max speed
+          const speedFactor = Math.min(1.0, Math.abs(forwardVel) / 28.2);
+          targetYawRate = 4.4 - speedFactor * 1.6; // 4.4 rad/s -> 2.8 rad/s at max speed
         }
 
         if (this.isDrifting) {
-          targetYawSpeed *= 1.5; // Wider drift rotation
+          targetYawRate *= 1.85; // Snappy rotation during powerslide
         }
 
         const angvel = this.body.angvel();
-        const desiredYaw = input.steer * steerDir * targetYawSpeed;
-        const yawImpulse = (desiredYaw - angvel.y) * 0.45 * mass;
+        const desiredYaw = input.steer * steerDir * targetYawRate;
+        const yawImpulse = (desiredYaw - angvel.y) * 0.55 * mass;
 
         this.body.applyTorqueImpulse(new RAPIER.Vector3(0, yawImpulse, 0), true);
       }
@@ -464,87 +504,154 @@ export class Car {
     // 4. IN-AIR ATTITUDE CONTROL (PITCH, YAW, ROLL)
     // ==========================================
     if (!this.isGrounded && !this.isDodging) {
-      const pitchTorque = right.clone().multiplyScalar(input.pitch * 9.5 * mass);
-      const yawTorque = up.clone().multiplyScalar(-input.yaw * 9.0 * mass);
-      const rollTorque = forward.clone().multiplyScalar(-input.roll * 11.0 * mass);
+      // 4A. Air Throttle (gentle forward acceleration in air when holding throttle)
+      if (input.throttle !== 0) {
+        const airThrottleForce = forward.clone().multiplyScalar(input.throttle * 2.0 * mass);
+        this.body.applyImpulse(
+          new RAPIER.Vector3(airThrottleForce.x * dt, airThrottleForce.y * dt, airThrottleForce.z * dt),
+          true
+        );
+      }
+
+      // 4B. Calibrated Rocket League Aerial Torques
+      // Pitch: 12.46 rad/s², Yaw: 9.11 rad/s², Roll: 38.34 rad/s²
+      const pitchTorque = right.clone().multiplyScalar(input.pitch * 12.5 * mass);
+      const yawTorque = up.clone().multiplyScalar(-input.yaw * 9.5 * mass);
+      const rollTorque = forward.clone().multiplyScalar(-input.roll * 38.0 * mass);
 
       const totalTorque = pitchTorque.add(yawTorque).add(rollTorque);
       this.body.applyTorqueImpulse(
         new RAPIER.Vector3(totalTorque.x * dt, totalTorque.y * dt, totalTorque.z * dt),
         true
       );
+
+      // 4C. Angular Velocity Clamp (Max 5.5 rad/s in RL)
+      const angvel = this.body.angvel();
+      const currentAngSpeed = Math.hypot(angvel.x, angvel.y, angvel.z);
+      if (currentAngSpeed > 5.5) {
+        const scale = 5.5 / currentAngSpeed;
+        this.body.setAngvel(new RAPIER.Vector3(angvel.x * scale, angvel.y * scale, angvel.z * scale), true);
+      }
+
+      // 4D. Auto-stabilizing air damping when rotational inputs are released
+      if (input.pitch === 0 && input.yaw === 0 && input.roll === 0) {
+        const dampFactor = Math.max(0, 1.0 - dt * 3.5);
+        this.body.setAngvel(
+          new RAPIER.Vector3(angvel.x * dampFactor, angvel.y * dampFactor, angvel.z * dampFactor),
+          true
+        );
+      }
     }
   }
 
   public checkBallHit(ball: Ball): void {
     const now = performance.now();
-    if (now - this.lastBallHitTime < 100) return;
+    if (now - this.lastBallHitTime < 80) return; // 80ms hit cooldown to avoid multi-touches
 
     const carPos = this.getPosition();
     const ballPos = ball.getPosition();
     const dist = carPos.distanceTo(ballPos);
 
-    // Collision boundary: ball radius 2.0 + car half-extent ~1.7 = 3.7
-    if (dist < 3.7) {
+    // Collision boundary: ball radius ~1.82 + car half-extent ~1.75 = 3.6m
+    if (dist < 3.65) {
       this.lastBallHitTime = now;
 
       const carVel = this.getVelocity();
+      const ballVel = ball.getVelocity();
       const carSpeed = carVel.length();
       const forward = this.getForward();
+      const up = this.getUp();
+
+      // Hit direction vector from car center of mass to ball center of mass
       const hitDir = new THREE.Vector3().subVectors(ballPos, carPos).normalize();
 
-      // Front bumper alignment check for power shots
+      // Surface zone alignment checks
       const frontAlignment = hitDir.dot(forward);
-      const underbellyAlignment = hitDir.dot(this.getUp());
+      const underbellyAlignment = hitDir.dot(up);
 
-      // Legendary Rocket League FLIP RESET (Hitting bottom of car on ball)
-      if (!this.isGrounded && underbellyAlignment < -0.35) {
+      // ==========================================
+      // 1. FLIP RESET (Hitting underbelly on ball)
+      // ==========================================
+      if (!this.isGrounded && underbellyAlignment < -0.32) {
         this.jumpsRemaining = 1;
         this.airTime = 0;
+        this.isJumpHolding = false;
         this.soundManager.playBoostPickup();
-        this.particleManager.spawnShockwaveRing(carPos, 0x00ff88, 1.4, 18.0);
+        this.particleManager.spawnShockwaveRing(carPos, 0x00ff88, 1.6, 20.0);
       }
 
-      const isPowerShot = frontAlignment > 0.4 && (carSpeed > 10 || this.isBoosting || this.isDodging);
+      // ==========================================
+      // 2. ROCKET LEAGUE HIT FORCE CALCULATIONS
+      // ==========================================
+      const isPowerShot = frontAlignment > 0.35;
+      const isRoofTouch = underbellyAlignment > 0.35;
+      const isUnderbellyTouch = underbellyAlignment < -0.32;
 
-      // Pinch Shot Detection (Near wall or floor)
-      const isNearWallOrFloor = Math.abs(ballPos.x) > 37 || Math.abs(ballPos.z) > 46 || ballPos.y < 2.2;
-      const isPinch = isNearWallOrFloor && carSpeed > 15 && isPowerShot;
+      // Pinch Shot Detection (Ball compressed against stadium wall or ground)
+      const isNearWallOrFloor = Math.abs(ballPos.x) > 37.5 || Math.abs(ballPos.z) > 47.0 || ballPos.y < 2.1;
+      const isPinch = isNearWallOrFloor && carSpeed > 14.0 && isPowerShot;
 
-      // Calibrated hit magnitude for tournament ball
-      let forceMagnitude = 180; // Base hit
+      // Relative collision velocity: Δv = v_car - v_ball
+      const relVel = new THREE.Vector3().subVectors(carVel, ballVel);
+      const relSpeed = Math.max(0, relVel.dot(hitDir));
+
+      let hitMultiplier = 1.0;
+      let baseImpulse = 160.0;
+
       if (isPinch) {
-        forceMagnitude = 650 + carSpeed * 18; // Massive supersonic pinch acceleration
+        // Supersonic Pinch: Massive kinetic multiplier (>140 km/h)
+        hitMultiplier = 4.2;
+        baseImpulse = 750.0 + carSpeed * 22.0;
       } else if (isPowerShot) {
-        forceMagnitude = 360 + carSpeed * 12;
-        if (this.isSupersonic) forceMagnitude += 150;
-        if (this.isDodging) forceMagnitude += 120;
+        // Front Bumper Power Shot: 1.45x multiplier
+        hitMultiplier = 1.45;
+        baseImpulse = 320.0 + carSpeed * 14.0;
+        if (this.isSupersonic) baseImpulse += 180.0;
+        if (this.isDodging) baseImpulse += 140.0;
+      } else if (isRoofTouch) {
+        // Roof Hit: 1.05x multiplier
+        hitMultiplier = 1.05;
+        baseImpulse = 200.0 + carSpeed * 9.0;
+      } else if (isUnderbellyTouch) {
+        // Wheels / Underbelly Soft Touch (cushions the ball for dribbles & air dribbles)
+        hitMultiplier = 0.45;
+        baseImpulse = 80.0 + carSpeed * 4.0;
       } else {
-        forceMagnitude += carSpeed * 8;
+        // Side bumper hit
+        hitMultiplier = 0.95;
+        baseImpulse = 180.0 + carSpeed * 8.0;
       }
 
-      // Add slight vertical lift to shots
-      hitDir.y = Math.max(hitDir.y, isPinch ? 0.35 : 0.18);
-      hitDir.normalize();
+      // Add gentle vertical lift to power shots
+      if (isPowerShot && !isPinch) {
+        hitDir.y = Math.max(hitDir.y, 0.22);
+        hitDir.normalize();
+      }
 
-      const impulse = hitDir.multiplyScalar(forceMagnitude);
-      ball.body.applyImpulse(new RAPIER.Vector3(impulse.x, impulse.y, impulse.z), true);
+      const totalImpulseMag = (baseImpulse + relSpeed * 8.5 * hitMultiplier);
+      const ballImpulse = hitDir.clone().multiplyScalar(totalImpulseMag);
 
-      // Screen shake, sparks, and sound
+      // Apply impulse to Ball
+      ball.body.applyImpulse(new RAPIER.Vector3(ballImpulse.x, ballImpulse.y, ballImpulse.z), true);
+
+      // Apply realistic minor recoil to Car (Newton's 3rd Law asymmetry in RL)
+      const carRecoil = hitDir.clone().multiplyScalar(-totalImpulseMag * 0.12);
+      this.body.applyImpulse(new RAPIER.Vector3(carRecoil.x, carRecoil.y, carRecoil.z), true);
+
+      // Visual & Audio Hit Feedback
       const contactPoint = carPos.clone().add(ballPos).multiplyScalar(0.5);
-      const intensity = isPinch ? 2.5 : isPowerShot ? 1.8 : Math.max(0.8, carSpeed / 12.0);
+      const intensity = isPinch ? 2.8 : isPowerShot ? 1.9 : Math.max(0.7, carSpeed / 12.0);
       this.soundManager.playBallHit(intensity);
       this.particleManager.emitBallHitSparks(contactPoint, intensity);
 
       if (isPinch) {
         this.soundManager.playSonicBoom();
-        this.particleManager.spawnShockwaveRing(contactPoint, 0xff00ff, 2.2, 35.0);
+        this.particleManager.spawnShockwaveRing(contactPoint, 0xff00ff, 2.4, 38.0);
       } else if (isPowerShot) {
-        this.particleManager.spawnShockwaveRing(contactPoint, this.customization.accentColor, 1.4, 18.0);
+        this.particleManager.spawnShockwaveRing(contactPoint, this.customization.accentColor, 1.5, 20.0);
       }
     }
   }
-
 
   public collectBoost(amount: number): void {
     this.boostAmount = Math.min(100, this.boostAmount + amount);

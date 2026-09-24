@@ -271,7 +271,7 @@ class Game {
     }
 
     // 5. Update Ball, Stadium, and Particle Effects
-    this.ball.update();
+    this.ball.update(dt);
     this.stadium.update(dt);
     this.particleManager.update(dt);
 

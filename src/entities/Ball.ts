@@ -7,7 +7,7 @@ export class Ball {
   public mesh: THREE.Group;
   public body: RAPIER.RigidBody;
   public collider: RAPIER.Collider;
-  public readonly radius: number = 1.82;
+  public readonly radius: number = 1.825; // Calibrated official Rocket League ball radius scale
 
   private scene: THREE.Scene;
   private soundManager: SoundManager;
@@ -17,6 +17,10 @@ export class Ball {
   private trailPoints: THREE.Vector3[] = [];
   private trailLine: THREE.Line;
   private trailColors: Float32Array;
+
+  // Aerodynamic constants
+  private readonly magnusCoeff: number = 0.0035; // Aerodynamic spin curve
+  private readonly maxBallSpeed: number = 80.0;   // ~288 km/h max terminal ball speed
 
   constructor(
     scene: THREE.Scene,
@@ -74,8 +78,8 @@ export class Ball {
     const ballGeo = new THREE.SphereGeometry(this.radius, 48, 48);
     this.ballMat = new THREE.MeshStandardMaterial({
       map: ballTexture,
-      roughness: 0.2,
-      metalness: 0.45,
+      roughness: 0.18,
+      metalness: 0.5,
       emissive: 0x00d2ff,
       emissiveIntensity: 0.5
     });
@@ -86,23 +90,23 @@ export class Ball {
 
     this.scene.add(this.mesh);
 
-    // 2. Rapier Physics RigidBody
+    // 2. Rapier Physics RigidBody (Standard Rocket League ball dynamics)
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(0, 3.0, 0)
-      .setLinearDamping(0.008)
-      .setAngularDamping(0.02)
+      .setLinearDamping(0.005)
+      .setAngularDamping(0.015)
       .setCcdEnabled(true);
 
     this.body = world.createRigidBody(bodyDesc);
 
     const colliderDesc = RAPIER.ColliderDesc.ball(this.radius)
-      .setMass(30.0) // Calibrated tournament ball mass
-      .setRestitution(0.85)
+      .setMass(30.0) // Calibrated 30kg tournament ball mass
+      .setRestitution(0.70)
       .setFriction(0.35);
 
     this.collider = world.createCollider(colliderDesc, this.body);
 
-    // 3. Ground Indicator Decal (Shows landing spot with altitude indicator)
+    // 3. Ground Indicator Decal (Landing spot projection with altitude indicator)
     this.groundDecal = new THREE.Group();
 
     const ringGeo = new THREE.RingGeometry(0.8, 2.4, 32);
@@ -162,7 +166,7 @@ export class Ball {
     ).normalize();
 
     this.body.applyImpulse(
-      new RAPIER.Vector3(blastDir.x * 250, blastDir.y * 200, blastDir.z * 250),
+      new RAPIER.Vector3(blastDir.x * 260, blastDir.y * 220, blastDir.z * 260),
       true
     );
 
@@ -170,18 +174,38 @@ export class Ball {
     this.soundManager.playGoal();
   }
 
-  public update(): void {
+  public update(dt: number = 1 / 120): void {
     const pos = this.body.translation();
     const rot = this.body.rotation();
     const vel = this.body.linvel();
-    const speed = Math.hypot(vel.x, vel.y, vel.z);
+    const angvel = this.body.angvel();
+
+    let speed = Math.hypot(vel.x, vel.y, vel.z);
+
+    // Terminal velocity clamp
+    if (speed > this.maxBallSpeed) {
+      const scale = this.maxBallSpeed / speed;
+      this.body.setLinvel(new RAPIER.Vector3(vel.x * scale, vel.y * scale, vel.z * scale), true);
+      speed = this.maxBallSpeed;
+    }
+
+    // Aerodynamic Magnus Effect (Spin Curve in Air)
+    if (pos.y > this.radius + 0.5 && speed > 8.0) {
+      const v = new THREE.Vector3(vel.x, vel.y, vel.z);
+      const w = new THREE.Vector3(angvel.x, angvel.y, angvel.z);
+      const magnusForce = new THREE.Vector3().crossVectors(w, v).multiplyScalar(this.magnusCoeff * this.body.mass());
+      this.body.applyImpulse(
+        new RAPIER.Vector3(magnusForce.x * dt, magnusForce.y * dt, magnusForce.z * dt),
+        true
+      );
+    }
 
     this.mesh.position.set(pos.x, pos.y, pos.z);
     this.mesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
 
     // Dynamic Emissive Glow based on speed
-    const speedRatio = Math.min(1.0, speed / 35.0);
-    this.ballMat.emissiveIntensity = 0.4 + speedRatio * 1.6;
+    const speedRatio = Math.min(1.0, speed / 38.0);
+    this.ballMat.emissiveIntensity = 0.4 + speedRatio * 1.8;
     if (speedRatio > 0.6) {
       this.ballMat.emissive.setHex(0xff00ff); // Hot purple supersonic glow
     } else {
@@ -195,7 +219,7 @@ export class Ball {
     const altitude = Math.max(0, pos.y - this.radius);
     const scale = Math.max(0.6, Math.min(2.8, 1.0 + altitude * 0.12));
     this.groundDecal.scale.set(scale, scale, 1);
-    const opacity = Math.max(0.2, 0.85 - altitude * 0.03);
+    const opacity = Math.max(0.18, 0.85 - altitude * 0.035);
     const ringMesh = this.groundDecal.children[0] as THREE.Mesh;
     if (ringMesh) {
       (ringMesh.material as THREE.MeshBasicMaterial).opacity = opacity;
@@ -217,7 +241,7 @@ export class Ball {
       const pt = this.trailPoints[i] || currentPos;
       posAttr.setXYZ(i, pt.x, pt.y, pt.z);
 
-      const fade = Math.max(0, 1 - i / 32) * (speed / 15.0);
+      const fade = Math.max(0, 1 - i / 32) * (speed / 14.0);
       const c = baseColor.clone().multiplyScalar(Math.min(1.5, fade));
       colAttr.setXYZ(i, c.r, c.g, c.b);
     }
