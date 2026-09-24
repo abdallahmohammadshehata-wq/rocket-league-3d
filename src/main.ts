@@ -237,8 +237,14 @@ class Game {
       this.rumbleManager.update(dt);
     }
 
-    // Lock car motion during kickoff countdown or goal replay
-    const isLocked = this.isKickoffInProgress || this.isGoalReplay;
+    // If player presses throttle, steer, jump or boost, immediately release kickoff lock for instant control
+    if (this.isKickoffInProgress && (globalInput.p1.throttle !== 0 || globalInput.p1.steer !== 0 || globalInput.p1.jump || globalInput.p1.boost)) {
+      this.isKickoffInProgress = false;
+      this.hud.hideCountdown();
+    }
+
+    // Only lock car motion during post-goal replay celebrations
+    const isLocked = this.isGoalReplay;
 
     const p1Input = isLocked
       ? { ...globalInput.p1, throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, jumpJustPressed: false, boost: false, handbrake: false }

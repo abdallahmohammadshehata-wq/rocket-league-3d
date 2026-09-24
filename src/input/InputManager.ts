@@ -48,7 +48,6 @@ export class InputManager {
     window.addEventListener('mouseup', (e) => this.onMouseUp(e));
     window.addEventListener('blur', () => this.clear());
     window.addEventListener('contextmenu', (e) => {
-      // Allow right click to toggle ball cam if clicking inside canvas
       if ((e.target as HTMLElement)?.tagName === 'CANVAS') {
         e.preventDefault();
         this.mouseCamToggle = true;
@@ -59,24 +58,39 @@ export class InputManager {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
-    const key = e.code;
-    if (!this.keys.get(key)) {
-      this.justPressedKeys.add(key);
+    const code = e.code;
+    const key = e.key;
+
+    if (code) {
+      if (!this.keys.get(code)) this.justPressedKeys.add(code);
+      this.keys.set(code, true);
     }
-    this.keys.set(key, true);
+    if (key) {
+      if (!this.keys.get(key)) this.justPressedKeys.add(key);
+      this.keys.set(key, true);
+      const lower = key.toLowerCase();
+      if (!this.keys.get(lower)) this.justPressedKeys.add(lower);
+      this.keys.set(lower, true);
+    }
 
     // Prevent default scrolling for game keys
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Numpad0'].includes(e.code)) {
+    if (
+      ['Space', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Numpad0'].includes(code) ||
+      ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(key)
+    ) {
       e.preventDefault();
     }
   }
 
   private onKeyUp(e: KeyboardEvent): void {
-    this.keys.set(e.code, false);
+    if (e.code) this.keys.set(e.code, false);
+    if (e.key) {
+      this.keys.set(e.key, false);
+      this.keys.set(e.key.toLowerCase(), false);
+    }
   }
 
   private onMouseDown(e: MouseEvent): void {
-    // Only register canvas clicks, avoid UI elements/modals
     const target = e.target as HTMLElement;
     if (!target) return;
     const isCanvas = target.tagName === 'CANVAS' || target.id === 'canvas-container';
@@ -138,12 +152,18 @@ export class InputManager {
     this.mouseCamToggle = false;
   }
 
-  public isHeld(code: string): boolean {
-    return !!this.keys.get(code) || !!this.touchState.get(code);
+  public isHeld(...codes: string[]): boolean {
+    for (const code of codes) {
+      if (this.keys.get(code) || this.touchState.get(code)) return true;
+    }
+    return false;
   }
 
-  public isJustPressed(code: string): boolean {
-    return this.justPressedKeys.has(code) || this.touchJustPressed.has(code);
+  public isJustPressed(...codes: string[]): boolean {
+    for (const code of codes) {
+      if (this.justPressedKeys.has(code) || this.touchJustPressed.has(code)) return true;
+    }
+    return false;
   }
 
   public playHaptic(gamepadIndex: number, durationMs: number = 150, weak: number = 0.5, strong: number = 0.5): void {
@@ -158,7 +178,7 @@ export class InputManager {
           strongMagnitude: strong
         });
       } catch (_e) {
-        // Haptic feedback not supported on this platform
+        // Vibration not supported
       }
     }
   }
@@ -171,49 +191,38 @@ export class InputManager {
     }
 
     // -------------------------------------------------------------
-    // 1. PLAYER 1 KEYBOARD & MOUSE CONTROLS
+    // 1. PLAYER 1 (MAIN USER) KEYBOARD & MOUSE CONTROLS
+    // Supports BOTH Keyboard Arrows AND WASD simultaneously!
     // -------------------------------------------------------------
-    const p1W = this.isHeld('KeyW') || this.isHeld('ArrowUp');
-    const p1S = this.isHeld('KeyS') || this.isHeld('ArrowDown');
-    const p1A = this.isHeld('KeyA') || this.isHeld('ArrowLeft');
-    const p1D = this.isHeld('KeyD') || this.isHeld('ArrowRight');
-    const p1Q = this.isHeld('KeyQ');
-    const p1E = this.isHeld('KeyE');
+    const p1Forward = this.isHeld('ArrowUp', 'KeyW', 'w', 'W', 'Up');
+    const p1Reverse = this.isHeld('ArrowDown', 'KeyS', 's', 'S', 'Down');
+    const p1Left = this.isHeld('ArrowLeft', 'KeyA', 'a', 'A', 'Left');
+    const p1Right = this.isHeld('ArrowRight', 'KeyD', 'd', 'D', 'Right');
+    const p1RollL = this.isHeld('KeyQ', 'q', 'Q', 'BracketLeft');
+    const p1RollR = this.isHeld('KeyE', 'e', 'E', 'BracketRight');
 
-    let p1Throttle = (p1W ? 1 : 0) - (p1S ? 1 : 0);
-    let p1Steer = (p1D ? 1 : 0) - (p1A ? 1 : 0);
-    let p1Pitch = (p1S ? 1 : 0) - (p1W ? 1 : 0); // S = Nose Up (+), W = Nose Down (-)
+    let p1Throttle = (p1Forward ? 1 : 0) - (p1Reverse ? 1 : 0);
+    let p1Steer = (p1Right ? 1 : 0) - (p1Left ? 1 : 0);
+    let p1Pitch = (p1Reverse ? 1 : 0) - (p1Forward ? 1 : 0); // Reverse/Down = Nose Up (+), Forward/Up = Nose Down (-)
     let p1Yaw = p1Steer;
-    let p1Roll = (p1E ? 1 : 0) - (p1Q ? 1 : 0);
+    let p1Roll = (p1RollR ? 1 : 0) - (p1RollL ? 1 : 0);
 
-    let p1Jump = this.isHeld('Space') || this.isHeld('Numpad0') || this.isHeld('KeyJ');
-    let p1JumpJustPressed = this.isJustPressed('Space') || this.isJustPressed('Numpad0') || this.isJustPressed('KeyJ');
+    let p1Jump = this.isHeld('Space', ' ', 'Numpad0', 'KeyJ', 'j', 'Enter', 'ControlRight');
+    let p1JumpJustPressed = this.isJustPressed('Space', ' ', 'Numpad0', 'KeyJ', 'j', 'Enter', 'ControlRight');
 
     let p1Boost =
-      this.isHeld('ShiftLeft') ||
-      this.isHeld('ShiftRight') ||
-      this.isHeld('KeyF') ||
-      this.isHeld('KeyE') ||
-      this.isHeld('KeyK') ||
-      this.isHeld('KeyL') ||
+      this.isHeld('ShiftLeft', 'ShiftRight', 'Shift', 'KeyF', 'f', 'KeyE', 'e', 'KeyK', 'k', 'KeyL', 'l', 'AltLeft', 'AltRight', 'Alt') ||
       this.mouseBoost;
 
     let p1Handbrake =
-      this.isHeld('KeyX') ||
-      this.isHeld('KeyQ') ||
-      this.isHeld('ControlLeft') ||
-      this.isHeld('Numpad2');
+      this.isHeld('KeyX', 'x', 'KeyQ', 'q', 'ControlLeft', 'ControlRight', 'Control', 'Numpad2');
 
     let p1ToggleCam =
-      this.isJustPressed('KeyC') ||
-      this.isJustPressed('Tab') ||
-      this.isJustPressed('KeyM') ||
+      this.isJustPressed('KeyC', 'c', 'Tab', 'KeyM', 'm') ||
       this.mouseCamToggle;
 
     let p1UsePowerup =
-      this.isJustPressed('KeyR') ||
-      this.isJustPressed('Enter') ||
-      this.isJustPressed('Numpad3');
+      this.isJustPressed('KeyR', 'r', 'Enter', 'Numpad3');
 
     // Reset single-frame mouse trigger
     this.mouseCamToggle = false;
@@ -225,11 +234,9 @@ export class InputManager {
     if (gp1) {
       const deadzone = 0.12;
 
-      // Analog Sticks
       const stickX = Math.abs(gp1.axes[0] ?? 0) > deadzone ? gp1.axes[0] : 0;
       const stickY = Math.abs(gp1.axes[1] ?? 0) > deadzone ? gp1.axes[1] : 0;
 
-      // Triggers for Throttle (RT = 7) and Brake/Reverse (LT = 6)
       const getBtnValue = (btn: GamepadButton | undefined): number => {
         if (!btn) return 0;
         return typeof btn === 'number' ? btn : (btn.value ?? (btn.pressed ? 1.0 : 0.0));
@@ -238,11 +245,9 @@ export class InputManager {
       const rtVal = getBtnValue(gp1.buttons[7]);
       const ltVal = getBtnValue(gp1.buttons[6]);
 
-      // If triggers pressed, use them for throttle
       if (rtVal > 0.05 || ltVal > 0.05) {
         p1Throttle = rtVal - ltVal;
-      } else if (Math.abs(stickY) > deadzone) {
-        // Fallback stick throttle if triggers are idle (Stick up = Forward, Stick down = Reverse)
+      } else if (Math.abs(stickY) > deadzone && p1Throttle === 0) {
         p1Throttle = -stickY;
       }
 
@@ -252,24 +257,22 @@ export class InputManager {
       }
 
       if (Math.abs(stickY) > 0) {
-        p1Pitch = stickY; // Stick Down = Nose Up (+), Stick Up = Nose Down (-)
+        p1Pitch = stickY;
       }
 
-      // D-Pad Input support (Buttons 12=Up, 13=Down, 14=Left, 15=Right)
       if (gp1.buttons[14]?.pressed) { p1Steer = -1; p1Yaw = -1; }
       if (gp1.buttons[15]?.pressed) { p1Steer = 1; p1Yaw = 1; }
       if (gp1.buttons[12]?.pressed && p1Throttle === 0) p1Throttle = 1;
       if (gp1.buttons[13]?.pressed && p1Throttle === 0) p1Throttle = -1;
 
-      // Face Buttons & Bumpers
-      const btnA = !!gp1.buttons[0]?.pressed; // Bottom button (Jump)
-      const btnB = !!gp1.buttons[1]?.pressed; // Right button (Boost)
-      const btnX = !!gp1.buttons[2]?.pressed; // Left button (Handbrake / Air Roll)
-      const btnY = !!gp1.buttons[3]?.pressed; // Top button (Ball Cam)
-      const btnLB = !!gp1.buttons[4]?.pressed; // Left Bumper (Air Roll Left / Handbrake)
-      const btnRB = !!gp1.buttons[5]?.pressed; // Right Bumper (Boost / Air Roll Right)
-      const btnL3 = !!gp1.buttons[10]?.pressed; // Left Stick Click (Rumble Powerup)
-      const btnR3 = !!gp1.buttons[11]?.pressed; // Right Stick Click (Ball Cam)
+      const btnA = !!gp1.buttons[0]?.pressed;
+      const btnB = !!gp1.buttons[1]?.pressed;
+      const btnX = !!gp1.buttons[2]?.pressed;
+      const btnY = !!gp1.buttons[3]?.pressed;
+      const btnLB = !!gp1.buttons[4]?.pressed;
+      const btnRB = !!gp1.buttons[5]?.pressed;
+      const btnL3 = !!gp1.buttons[10]?.pressed;
+      const btnR3 = !!gp1.buttons[11]?.pressed;
 
       if (btnA) p1Jump = true;
       if (btnA && !this.prevGpButtonsP1[0]) p1JumpJustPressed = true;
@@ -289,14 +292,14 @@ export class InputManager {
     }
 
     // -------------------------------------------------------------
-    // 3. PLAYER 2 KEYBOARD CONTROLS (Split-Screen)
+    // 3. PLAYER 2 KEYBOARD CONTROLS (Split-Screen Mode)
     // -------------------------------------------------------------
-    const p2Up = this.isHeld('ArrowUp') || this.isHeld('KeyI');
-    const p2Down = this.isHeld('ArrowDown') || this.isHeld('KeyK');
-    const p2Left = this.isHeld('ArrowLeft') || this.isHeld('KeyJ');
-    const p2Right = this.isHeld('ArrowRight') || this.isHeld('KeyL');
-    const p2RollL = this.isHeld('BracketLeft') || this.isHeld('Numpad7') || this.isHeld('KeyU');
-    const p2RollR = this.isHeld('BracketRight') || this.isHeld('Numpad9') || this.isHeld('KeyO');
+    const p2Up = this.isHeld('KeyI', 'i');
+    const p2Down = this.isHeld('KeyK', 'k');
+    const p2Left = this.isHeld('KeyJ', 'j');
+    const p2Right = this.isHeld('KeyL', 'l');
+    const p2RollL = this.isHeld('KeyU', 'u', 'Numpad7');
+    const p2RollR = this.isHeld('KeyO', 'o', 'Numpad9');
 
     let p2Throttle = (p2Up ? 1 : 0) - (p2Down ? 1 : 0);
     let p2Steer = (p2Right ? 1 : 0) - (p2Left ? 1 : 0);
@@ -304,17 +307,13 @@ export class InputManager {
     let p2Yaw = p2Steer;
     let p2Roll = (p2RollR ? 1 : 0) - (p2RollL ? 1 : 0);
 
-    let p2Jump = this.isHeld('Numpad0') || this.isHeld('Enter') || this.isHeld('ControlRight') || this.isHeld('Slash');
-    let p2JumpJustPressed =
-      this.isJustPressed('Numpad0') ||
-      this.isJustPressed('Enter') ||
-      this.isJustPressed('ControlRight') ||
-      this.isJustPressed('Slash');
+    let p2Jump = this.isHeld('Numpad0', 'Slash', '/');
+    let p2JumpJustPressed = this.isJustPressed('Numpad0', 'Slash', '/');
 
-    let p2Boost = this.isHeld('ShiftRight') || this.isHeld('Numpad1') || this.isHeld('Quote') || this.isHeld('KeyP');
-    let p2Handbrake = this.isHeld('Numpad2') || this.isHeld('Period') || this.isHeld('Semicolon');
-    let p2ToggleCam = this.isJustPressed('NumpadDecimal') || this.isJustPressed('KeyM');
-    let p2UsePowerup = this.isJustPressed('Numpad3') || this.isJustPressed('Backslash');
+    let p2Boost = this.isHeld('Numpad1', 'KeyP', 'p');
+    let p2Handbrake = this.isHeld('Numpad2', 'Period', '.');
+    let p2ToggleCam = this.isJustPressed('NumpadDecimal', 'KeyM', 'm');
+    let p2UsePowerup = this.isJustPressed('Numpad3', 'Backslash', '\\');
 
     // -------------------------------------------------------------
     // 4. PLAYER 2 GAMEPAD (Gamepad Index 1)
@@ -380,21 +379,19 @@ export class InputManager {
     }
 
     // -------------------------------------------------------------
-    // 5. SYSTEM CONTROLS (Kickoff Reset, Pause, Controls Toggle)
+    // 5. SYSTEM CONTROLS
     // -------------------------------------------------------------
     const resetKickoff =
-      this.isJustPressed('KeyT') ||
-      this.isJustPressed('Backspace') ||
+      this.isJustPressed('KeyT', 't', 'Backspace') ||
       (gp1?.buttons[8]?.pressed && !this.prevGpButtonsP1[8]);
 
     const togglePause =
-      this.isJustPressed('Escape') ||
-      this.isJustPressed('KeyP') ||
+      this.isJustPressed('Escape', 'KeyP', 'p') ||
       (gp1?.buttons[9]?.pressed && !this.prevGpButtonsP1[9]);
 
-    const toggleControls = this.isJustPressed('KeyH');
+    const toggleControls = this.isJustPressed('KeyH', 'h');
 
-    // Flush single-frame triggers for keyboard & touch
+    // Flush single-frame triggers
     this.justPressedKeys.clear();
     this.touchJustPressed.clear();
 
