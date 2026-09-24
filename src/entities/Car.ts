@@ -472,40 +472,41 @@ export class Car {
         }
       }
 
-      // 3D. Lateral Grip & Powerslide / Drift Handling
-      this.isDrifting = input.handbrake && Math.abs(input.steer) > 0.05;
-      this.soundManager.setDriftActive(this.isDrifting && speed > 5);
-
-      const lateralVel = currentVel.dot(right);
-      const gripFactor = this.isDrifting ? 0.22 : 0.96;
-      const lateralImpulse = right.clone().multiplyScalar(-lateralVel * gripFactor * mass * dt * 60.0);
-      this.body.applyImpulse(
-        new RAPIER.Vector3(lateralImpulse.x, lateralImpulse.y, lateralImpulse.z),
-        true
-      );
-
-      // 3E. Steering
+      // 3D. Steering & Direct Angular Yaw Control (Need For Speed / Rocket League responsive handling)
       if (input.steer !== 0) {
         const isReversing = forwardVel < -0.3;
         const steerDir = isReversing ? 1 : -1;
+        const speedRatio = Math.min(1.0, Math.abs(forwardVel) / 28.5);
+        // Instant crisp yaw rate at all speeds: pivot turn when stopped, snappy high-speed turning
+        const baseTurnRate = Math.abs(forwardVel) < 0.6 ? 5.2 : (4.8 - speedRatio * 1.3);
+        const turnMultiplier = this.isDrifting ? 1.85 : 1.0;
+        const desiredYaw = input.steer * steerDir * baseTurnRate * turnMultiplier;
 
-        let targetYawRate: number;
-        if (Math.abs(forwardVel) < 1.0) {
-          targetYawRate = 4.4; // Pivot turn when stopped
-        } else {
-          const speedFactor = Math.min(1.0, Math.abs(forwardVel) / 28.5);
-          targetYawRate = 4.8 - speedFactor * 1.5;
-        }
+        const curAng = this.body.angvel();
+        this.body.setAngvel(new RAPIER.Vector3(curAng.x, desiredYaw, curAng.z), true);
+      } else if (this.isGrounded) {
+        // Smoothly stabilize rotation when steering key is released
+        const curAng = this.body.angvel();
+        this.body.setAngvel(new RAPIER.Vector3(curAng.x, curAng.y * 0.45, curAng.z), true);
+      }
 
-        if (this.isDrifting) {
-          targetYawRate *= 1.85;
-        }
+      // 3E. Velocity Heading Redirection & Lateral Grip
+      this.isDrifting = input.handbrake && Math.abs(input.steer) > 0.05;
+      this.soundManager.setDriftActive(this.isDrifting && speed > 5);
 
-        const angvel = this.body.angvel();
-        const desiredYaw = input.steer * steerDir * targetYawRate;
-        const yawImpulse = (desiredYaw - angvel.y) * 0.65 * mass;
+      if (Math.abs(forwardVel) > 0.15) {
+        const curLinvel = this.body.linvel();
+        const horizSpeed = Math.hypot(curLinvel.x, curLinvel.z);
+        const targetForward = forward.clone().setY(0).normalize();
+        const targetLinvel = targetForward.multiplyScalar(Math.sign(forwardVel) * horizSpeed);
 
-        this.body.applyTorqueImpulse(new RAPIER.Vector3(0, yawImpulse, 0), true);
+        // Responsive tire grip aligns momentum with car heading instantly
+        const steerGripRate = this.isDrifting ? 7.0 : 26.0;
+        const blend = Math.min(1.0, dt * steerGripRate);
+        const newVx = THREE.MathUtils.lerp(curLinvel.x, targetLinvel.x, blend);
+        const newVz = THREE.MathUtils.lerp(curLinvel.z, targetLinvel.z, blend);
+
+        this.body.setLinvel(new RAPIER.Vector3(newVx, curLinvel.y, newVz), true);
       }
     } else {
       this.soundManager.setDriftActive(false);
