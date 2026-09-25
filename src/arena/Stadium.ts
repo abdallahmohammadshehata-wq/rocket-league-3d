@@ -166,13 +166,10 @@ export class Stadium {
   }
 
   private buildWallsAndPhysicsColliders(): void {
-    const halfW = this.width / 2;    // 30
-    const halfL = this.length / 2;   // 50
-    const h = this.height;           // 28
-    const sideBackWidth = (this.width - this.goalWidth) / 2; // 22
-    const leftOffsetX = -halfW + sideBackWidth / 2;          // -19
-    const rightOffsetX = halfW - sideBackWidth / 2;          // +19
-    const goalUpperH = h - this.goalHeight;                  // 21.2
+    const halfW = this.width / 2;    // 41.0
+    const halfL = this.length / 2;   // 51.2
+    const h = this.height;           // 20.4
+    const goalUpperH = h - this.goalHeight; // 14.0
 
     // Modern cyber glass stadium wall material with glowing edges
     const glassWallMat = new THREE.MeshPhysicalMaterial({
@@ -188,26 +185,25 @@ export class Stadium {
 
     const rampMat = new THREE.MeshStandardMaterial({
       color: 0x08101a,
-      roughness: 0.4,
-      metalness: 0.6
+      roughness: 0.35,
+      metalness: 0.7
     });
 
     // -------------------------------------------------------------
     // 1. NON-OVERLAPPING OCTAGONAL PERIMETER WALLS
-    // In Rocket League, straight side walls stop before the 45° corner cut
     // -------------------------------------------------------------
-    const cornerCut = 12.0; // Clean 12-meter 45-degree corner chamfer
-    const straightSideLen = this.length - 2 * cornerCut; // 102.4 - 24 = 78.4
-    const straightBackLen = this.width - 2 * cornerCut;  // 82.0 - 24 = 58.0
+    const cornerCut = 12.0; // 12-meter 45-degree corner chamfer
+    const straightSideLen = this.length - 2 * cornerCut; // 78.4m
+    const straightBackLen = this.width - 2 * cornerCut;  // 58.0m
     const cornerDiagonal = cornerCut * Math.SQRT2;       // ~16.97m
 
-    // Left Wall (X = -halfW, Z from -(halfL - cornerCut) to +(halfL - cornerCut))
+    // Left Wall (X = -halfW)
     this.createSolidWall(new THREE.Vector3(-halfW, h / 2, 0), new THREE.Vector3(0.6, h, straightSideLen), glassWallMat);
-    // Right Wall (X = +halfW, Z from -(halfL - cornerCut) to +(halfL - cornerCut))
+    // Right Wall (X = +halfW)
     this.createSolidWall(new THREE.Vector3(halfW, h / 2, 0), new THREE.Vector3(0.6, h, straightSideLen), glassWallMat);
 
-    // Blue Back Walls (Z = -halfL, X from -(halfW - cornerCut) to +(halfW - cornerCut))
-    const backSegmentW = (straightBackLen - this.goalWidth) / 2; // (58.0 - 17.8) / 2 = 20.1
+    // Blue Back Walls (Z = -halfL)
+    const backSegmentW = (straightBackLen - this.goalWidth) / 2; // 20.1m
     const leftBackCenter = -(this.goalWidth / 2 + backSegmentW / 2); // -18.95
     const rightBackCenter = +(this.goalWidth / 2 + backSegmentW / 2); // +18.95
 
@@ -215,42 +211,42 @@ export class Stadium {
     this.createSolidWall(new THREE.Vector3(rightBackCenter, h / 2, -halfL), new THREE.Vector3(backSegmentW, h, 0.6), glassWallMat);
     this.createSolidWall(new THREE.Vector3(0, this.goalHeight + goalUpperH / 2, -halfL), new THREE.Vector3(this.goalWidth, goalUpperH, 0.6), glassWallMat);
 
-    // Orange Back Walls (Z = +halfL, X from -(halfW - cornerCut) to +(halfW - cornerCut))
+    // Orange Back Walls (Z = +halfL)
     this.createSolidWall(new THREE.Vector3(leftBackCenter, h / 2, halfL), new THREE.Vector3(backSegmentW, h, 0.6), glassWallMat);
     this.createSolidWall(new THREE.Vector3(rightBackCenter, h / 2, halfL), new THREE.Vector3(backSegmentW, h, 0.6), glassWallMat);
     this.createSolidWall(new THREE.Vector3(0, this.goalHeight + goalUpperH / 2, halfL), new THREE.Vector3(this.goalWidth, goalUpperH, 0.6), glassWallMat);
 
     // -------------------------------------------------------------
-    // 2. SEAMLESS 45-DEGREE ARENA CORNER WALLS (Octagon Chamfers)
+    // 2. 45-DEGREE OCTAGONAL CORNER WALLS
     // -------------------------------------------------------------
     const cornerCenterX = halfW - cornerCut / 2; // 35.0
     const cornerCenterZ = halfL - cornerCut / 2; // 45.2
 
     // Corner 1: Blue Left (-X, -Z)
-    this.createAngledRamp(
+    this.createAngledWall(
       new THREE.Vector3(-cornerCenterX, h / 2, -cornerCenterZ),
-      new THREE.Euler(0, -Math.PI / 4, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 4),
       new THREE.Vector3(cornerDiagonal, h, 0.6),
       glassWallMat
     );
     // Corner 2: Blue Right (+X, -Z)
-    this.createAngledRamp(
+    this.createAngledWall(
       new THREE.Vector3(cornerCenterX, h / 2, -cornerCenterZ),
-      new THREE.Euler(0, Math.PI / 4, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4),
       new THREE.Vector3(cornerDiagonal, h, 0.6),
       glassWallMat
     );
     // Corner 3: Orange Left (-X, +Z)
-    this.createAngledRamp(
+    this.createAngledWall(
       new THREE.Vector3(-cornerCenterX, h / 2, cornerCenterZ),
-      new THREE.Euler(0, Math.PI / 4, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4),
       new THREE.Vector3(cornerDiagonal, h, 0.6),
       glassWallMat
     );
     // Corner 4: Orange Right (+X, +Z)
-    this.createAngledRamp(
+    this.createAngledWall(
       new THREE.Vector3(cornerCenterX, h / 2, cornerCenterZ),
-      new THREE.Euler(0, -Math.PI / 4, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 4),
       new THREE.Vector3(cornerDiagonal, h, 0.6),
       glassWallMat
     );
@@ -274,85 +270,99 @@ export class Stadium {
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(halfW + 5, 0.5, halfL + 5).setRestitution(0.4), ceilBody);
 
     // -------------------------------------------------------------
-    // 4. 45-DEGREE FLOOR-TO-WALL RAMPS (Non-overlapping, perfectly smooth)
+    // 4. 100% FLUSH, SEAMLESS FLOOR-TO-WALL RAMPS (ZERO LIP, ZERO OBSTACLES)
     // -------------------------------------------------------------
-    const rampWidth = 3.2;
-    const rampHalf = rampWidth / 2;
-    const rampThick = 0.25;
-    const rampY = rampHalf * 0.707;
-    const rampOffset = rampHalf * 0.707;
+    const rampWidth = 3.8; // Generous 3.8m wide 45° transition ramp
+    const rampThick = 0.35;
+    // Embed ramp center so top-front face starts perfectly flush with floor (y = 0.0)
+    const rampY = (rampWidth / 4) * Math.SQRT2 - 0.12; // ~1.22m
+    const rampOffset = (rampWidth / 4) * Math.SQRT2 + 0.12; // ~1.46m from wall
 
-    // Left Side Ramp
-    this.createAngledRamp(
+    // Left Side Ramp (-X wall)
+    this.createAngledWall(
       new THREE.Vector3(-halfW + rampOffset, rampY, 0),
-      new THREE.Euler(0, 0, -Math.PI / 4),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 4),
       new THREE.Vector3(rampWidth, rampThick, straightSideLen),
       rampMat
     );
-    // Right Side Ramp
-    this.createAngledRamp(
+    // Right Side Ramp (+X wall)
+    this.createAngledWall(
       new THREE.Vector3(halfW - rampOffset, rampY, 0),
-      new THREE.Euler(0, 0, Math.PI / 4),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 4),
       new THREE.Vector3(rampWidth, rampThick, straightSideLen),
       rampMat
     );
 
-    // Blue Back Wall Ramps (Left and Right of Goal)
-    this.createAngledRamp(
+    // Blue Back Wall Ramps (-Z wall)
+    this.createAngledWall(
       new THREE.Vector3(leftBackCenter, rampY, -halfL + rampOffset),
-      new THREE.Euler(Math.PI / 4, 0, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 4),
       new THREE.Vector3(backSegmentW, rampThick, rampWidth),
       rampMat
     );
-    this.createAngledRamp(
+    this.createAngledWall(
       new THREE.Vector3(rightBackCenter, rampY, -halfL + rampOffset),
-      new THREE.Euler(Math.PI / 4, 0, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 4),
       new THREE.Vector3(backSegmentW, rampThick, rampWidth),
       rampMat
     );
 
-    // Orange Back Wall Ramps (Left and Right of Goal)
-    this.createAngledRamp(
+    // Orange Back Wall Ramps (+Z wall)
+    this.createAngledWall(
       new THREE.Vector3(leftBackCenter, rampY, halfL - rampOffset),
-      new THREE.Euler(-Math.PI / 4, 0, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 4),
       new THREE.Vector3(backSegmentW, rampThick, rampWidth),
       rampMat
     );
-    this.createAngledRamp(
+    this.createAngledWall(
       new THREE.Vector3(rightBackCenter, rampY, halfL - rampOffset),
-      new THREE.Euler(-Math.PI / 4, 0, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 4),
       new THREE.Vector3(backSegmentW, rampThick, rampWidth),
       rampMat
     );
 
-    // Corner Floor Ramps (Seamless Compound 45° Chamfers)
-    const cornerRampOffset = rampOffset * 1.414;
-    // Corner 1: Blue Left
-    this.createAngledRamp(
+    // -------------------------------------------------------------
+    // 5. SEAMLESS 45-DEGREE CORNER TRANSITION RAMPS (NO OBSTACLES)
+    // -------------------------------------------------------------
+    const cornerRampOffset = rampOffset / Math.SQRT2; // ~1.03m
+
+    // Corner 1: Blue Left (-X, -Z)
+    const qC1 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 4)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 4));
+    this.createAngledWall(
       new THREE.Vector3(-cornerCenterX + cornerRampOffset, rampY, -cornerCenterZ + cornerRampOffset),
-      new THREE.Euler(Math.PI / 5.6, -Math.PI / 4, 0),
-      new THREE.Vector3(cornerDiagonal, rampThick, rampWidth),
+      qC1,
+      new THREE.Vector3(rampWidth, rampThick, cornerDiagonal),
       rampMat
     );
-    // Corner 2: Blue Right
-    this.createAngledRamp(
+
+    // Corner 2: Blue Right (+X, -Z)
+    const qC2 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 4));
+    this.createAngledWall(
       new THREE.Vector3(cornerCenterX - cornerRampOffset, rampY, -cornerCenterZ + cornerRampOffset),
-      new THREE.Euler(Math.PI / 5.6, Math.PI / 4, 0),
-      new THREE.Vector3(cornerDiagonal, rampThick, rampWidth),
+      qC2,
+      new THREE.Vector3(rampWidth, rampThick, cornerDiagonal),
       rampMat
     );
-    // Corner 3: Orange Left
-    this.createAngledRamp(
+
+    // Corner 3: Orange Left (-X, +Z)
+    const qC3 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 4));
+    this.createAngledWall(
       new THREE.Vector3(-cornerCenterX + cornerRampOffset, rampY, cornerCenterZ - cornerRampOffset),
-      new THREE.Euler(-Math.PI / 5.6, Math.PI / 4, 0),
-      new THREE.Vector3(cornerDiagonal, rampThick, rampWidth),
+      qC3,
+      new THREE.Vector3(rampWidth, rampThick, cornerDiagonal),
       rampMat
     );
-    // Corner 4: Orange Right
-    this.createAngledRamp(
+
+    // Corner 4: Orange Right (+X, +Z)
+    const qC4 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 4)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 4));
+    this.createAngledWall(
       new THREE.Vector3(cornerCenterX - cornerRampOffset, rampY, cornerCenterZ - cornerRampOffset),
-      new THREE.Euler(-Math.PI / 5.6, -Math.PI / 4, 0),
-      new THREE.Vector3(cornerDiagonal, rampThick, rampWidth),
+      qC4,
+      new THREE.Vector3(rampWidth, rampThick, cornerDiagonal),
       rampMat
     );
 
@@ -370,31 +380,30 @@ export class Stadium {
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z);
     const body = this.world.createRigidBody(bodyDesc);
     const colDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
-      .setFriction(0.3)
+      .setFriction(0.2)
       .setRestitution(0.4);
     this.world.createCollider(colDesc, body);
   }
 
-  private createAngledRamp(
+  private createAngledWall(
     position: THREE.Vector3,
-    rotation: THREE.Euler,
+    quaternion: THREE.Quaternion,
     size: THREE.Vector3,
     material: THREE.Material
   ): void {
     const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
     const mesh = new THREE.Mesh(geo, material);
     mesh.position.copy(position);
-    mesh.rotation.copy(rotation);
+    mesh.quaternion.copy(quaternion);
     mesh.receiveShadow = true;
     this.scene.add(mesh);
 
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z);
-    const q = new THREE.Quaternion().setFromEuler(rotation);
-    bodyDesc.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
+    bodyDesc.setRotation({ x: quaternion.x, y: quaternion.y, z: quaternion.z, w: quaternion.w });
     const body = this.world.createRigidBody(bodyDesc);
 
     const colDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
-      .setFriction(0.4)
+      .setFriction(0.3)
       .setRestitution(0.35);
     this.world.createCollider(colDesc, body);
   }

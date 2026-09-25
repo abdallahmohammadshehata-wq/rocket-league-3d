@@ -59,14 +59,16 @@ export class Car {
   private underglowMesh!: THREE.Mesh;
   private topperGroup!: THREE.Group;
 
-  // Ground check ray offsets
+  // Ground & Wall check ray offsets (6-probe layout for arena walls and 45° ramps)
   private readonly rayOffsets = [
-    new THREE.Vector3(-0.95, 0.0, -1.5),
-    new THREE.Vector3(0.95, 0.0, -1.5),
-    new THREE.Vector3(-0.95, 0.0, 1.5),
-    new THREE.Vector3(0.95, 0.0, 1.5)
+    new THREE.Vector3(-0.95, -0.15, -1.5),
+    new THREE.Vector3(0.95, -0.15, -1.5),
+    new THREE.Vector3(-0.95, -0.15, 1.5),
+    new THREE.Vector3(0.95, -0.15, 1.5),
+    new THREE.Vector3(0.0, -0.15, 0.0),
+    new THREE.Vector3(0.0, -0.15, -1.8) // Front bumper anticipation probe
   ];
-  private readonly rayLength: number = 1.45;
+  private readonly rayLength: number = 1.95;
   private contactNormal: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
 
   // Ball hit cooldown
@@ -286,17 +288,7 @@ export class Car {
     const carPos = this.currPosition;
     const carQuat = this.currQuaternion;
 
-    // Fail-safe floor detection: stadium floor is strictly at y = 0.0
-    // If the car's center is at y <= 1.35, the car is physically grounded on the pitch!
-    if (carPos.y <= 1.35) {
-      this.isGrounded = true;
-      this.contactNormal.set(0, 1, 0);
-      this.airTime = 0;
-      this.jumpsRemaining = 2;
-      return;
-    }
-
-    // Wall & Ramp Raycasting for climbing 45° ramps and vertical arena walls
+    // Wall & Ramp Raycasting for climbing 45° ramps, octagonal corners, and vertical arena walls
     let hits = 0;
     Car._scratchAvgNormal.set(0, 0, 0);
     Car._scratchDown.set(0, -1, 0).applyQuaternion(carQuat);
@@ -329,6 +321,12 @@ export class Car {
     if (hits > 0) {
       this.isGrounded = true;
       this.contactNormal.copy(Car._scratchAvgNormal.normalize());
+      this.airTime = 0;
+      this.jumpsRemaining = 2;
+    } else if (carPos.y <= 0.85) {
+      // Fallback only if flat on the turf floor with no ray hits
+      this.isGrounded = true;
+      this.contactNormal.set(0, 1, 0);
       this.airTime = 0;
       this.jumpsRemaining = 2;
     } else {
@@ -414,8 +412,9 @@ export class Car {
       // 2C. Jump Button Pressed Trigger
       if (input.jumpJustPressed) {
         if (this.isGrounded) {
-          // Ground Jump: crisp initial pop off surface
-          const jumpImpulse = up.clone().multiplyScalar(6.5 * mass);
+          // Ground & Wall Jump: launch perpendicular to surface / local up into arena
+          const jumpDir = up.clone().lerp(this.contactNormal, 0.55).normalize();
+          const jumpImpulse = jumpDir.multiplyScalar(8.5 * mass);
           this.body.applyImpulse(
             new RAPIER.Vector3(jumpImpulse.x, jumpImpulse.y, jumpImpulse.z),
             true
@@ -453,7 +452,7 @@ export class Car {
             this.soundManager.playDodge();
             this.particleManager.spawnShockwaveRing(this.getPosition(), this.customization.accentColor, 1.8, 24.0);
           } else {
-            const doubleJumpImpulse = up.clone().multiplyScalar(6.2 * mass);
+            const doubleJumpImpulse = up.clone().multiplyScalar(6.5 * mass);
             this.body.applyImpulse(
               new RAPIER.Vector3(doubleJumpImpulse.x, doubleJumpImpulse.y, doubleJumpImpulse.z),
               true
@@ -467,22 +466,30 @@ export class Car {
     }
 
     // ==========================================
-    // 3. GROUNDED DRIVING & REVERSE
+    // 3. GROUNDED & WALL DRIVING
     // ==========================================
     if (this.isGrounded && !this.isDodging) {
-      // 3A. Sticky Downforce
-      const stickyForce = this.contactNormal.clone().multiplyScalar(-6.0 * mass);
+      // 3A. Sticky Downforce towards Surface Normal
+      const stickyForce = this.contactNormal.clone().multiplyScalar(-26.0 * mass);
       this.body.applyImpulse(
         new RAPIER.Vector3(stickyForce.x * dt, stickyForce.y * dt, stickyForce.z * dt),
         true
       );
 
-      // 3B. Surface Normal Alignment Torque
+      // 3B. Wall Anti-Gravity Buoyancy Compensation (authentic Rocket League wall riding)
+      // Cancels world gravity slide when climbing angled ramps and vertical walls
+      if (this.contactNormal.y < 0.92) {
+        const antiGravityY = 13.2 * (1.0 - Math.max(0, this.contactNormal.y)) * mass;
+        this.body.applyImpulse(new RAPIER.Vector3(0, antiGravityY * dt, 0), true);
+      }
+
+      // 3C. Surface Normal Alignment Torque
       const currentUp = up.clone();
       const alignAxis = new THREE.Vector3().crossVectors(currentUp, this.contactNormal);
       const alignAngle = currentUp.angleTo(this.contactNormal);
-      if (alignAngle > 0.03) {
-        const alignTorque = alignAxis.normalize().multiplyScalar(alignAngle * 14.0 * mass);
+      if (alignAngle > 0.02) {
+        const torqueScale = Math.min(alignAngle * 42.0, 58.0);
+        const alignTorque = alignAxis.normalize().multiplyScalar(torqueScale * mass);
         this.body.applyTorqueImpulse(
           new RAPIER.Vector3(alignTorque.x * dt, alignTorque.y * dt, alignTorque.z * dt),
           true
@@ -493,15 +500,15 @@ export class Car {
       const maxDriveSpeed = 28.5; // ~102 km/h
       const maxReverseSpeed = -18.0; // ~65 km/h
 
-      // 3C. Instant Responsive Acceleration Curve (Forward & Reverse)
+      // 3D. Responsive Acceleration Curve (Forward & Reverse along surface)
       if (input.throttle > 0) {
         if (forwardVel < -0.2) {
           // Instantly brake and cancel reverse momentum
           const brakeForce = forward.clone().multiplyScalar(80.0 * mass);
           this.body.applyImpulse(new RAPIER.Vector3(brakeForce.x * dt, brakeForce.y * dt, brakeForce.z * dt), true);
         } else if (forwardVel < maxDriveSpeed) {
-          // Strong 42.0 m/s² initial acceleration from dead stop!
-          const driveAcc = 42.0 * Math.max(0.22, 1.0 - forwardVel / maxDriveSpeed);
+          // Strong 44.0 m/s² initial acceleration from dead stop
+          const driveAcc = 44.0 * Math.max(0.25, 1.0 - forwardVel / maxDriveSpeed);
           const driveForce = forward.clone().multiplyScalar(driveAcc * mass * input.throttle);
           this.body.applyImpulse(new RAPIER.Vector3(driveForce.x * dt, driveForce.y * dt, driveForce.z * dt), true);
         }
@@ -523,8 +530,7 @@ export class Car {
         }
       }
 
-      // 3D. Progressive Steering & Damped Dynamic Yaw
-      // Smooth input to prevent jarring instant jerk
+      // 3E. 3D Progressive Steering Around Local Up Axis (Surface Normal)
       this.smoothedSteer = THREE.MathUtils.damp(this.smoothedSteer, input.steer, 14.0, dt);
 
       if (Math.abs(this.smoothedSteer) > 0.01) {
@@ -532,7 +538,6 @@ export class Car {
         const steerDir = isReversing ? 1 : -1;
         const speedRatio = Math.min(1.0, Math.abs(forwardVel) / 28.5);
 
-        // Balanced progressive turning rate (Rocket League Octane standard: ~3.2 rad/s at speed)
         let baseTurnRate: number;
         if (Math.abs(forwardVel) < 0.5) {
           baseTurnRate = 3.6; // Controlled pivot turn when stationary
@@ -540,37 +545,53 @@ export class Car {
           baseTurnRate = 3.2 - speedRatio * 0.9; // Stable high-speed arcs
         }
 
-        // Drift (Powerslide) gives controlled tail-out angle without spinning out uncontrollably
         const driftBoost = this.isDrifting ? 1.45 : 1.0;
-        const targetYaw = this.smoothedSteer * steerDir * baseTurnRate * driftBoost;
+        const targetYawRate = this.smoothedSteer * steerDir * baseTurnRate * driftBoost;
 
         const curAng = this.body.angvel();
-        const smoothedYaw = THREE.MathUtils.damp(curAng.y, targetYaw, 16.0, dt);
-        this.body.setAngvel(new RAPIER.Vector3(curAng.x, smoothedYaw, curAng.z), true);
-      } else if (this.isGrounded) {
-        // Natural rotation damping when steering is released
+        const curAngVec = new THREE.Vector3(curAng.x, curAng.y, curAng.z);
+        const currentYawRate = curAngVec.dot(up);
+        const smoothedYawRate = THREE.MathUtils.damp(currentYawRate, targetYawRate, 18.0, dt);
+        const yawDiff = smoothedYawRate - currentYawRate;
+
+        const yawTorque = up.clone().multiplyScalar(yawDiff * mass * 0.85);
+        this.body.applyTorqueImpulse(
+          new RAPIER.Vector3(yawTorque.x, yawTorque.y, yawTorque.z),
+          true
+        );
+      } else {
         const curAng = this.body.angvel();
-        const dampYaw = THREE.MathUtils.damp(curAng.y, 0, 18.0, dt);
-        this.body.setAngvel(new RAPIER.Vector3(curAng.x, dampYaw, curAng.z), true);
+        const curAngVec = new THREE.Vector3(curAng.x, curAng.y, curAng.z);
+        const currentYawRate = curAngVec.dot(up);
+        const dampYaw = THREE.MathUtils.damp(currentYawRate, 0, 18.0, dt);
+        const yawDiff = dampYaw - currentYawRate;
+        const yawTorque = up.clone().multiplyScalar(yawDiff * mass * 0.85);
+        this.body.applyTorqueImpulse(
+          new RAPIER.Vector3(yawTorque.x, yawTorque.y, yawTorque.z),
+          true
+        );
       }
 
-      // 3E. Velocity Heading Redirection & Progressive Lateral Tire Grip
+      // 3F. Velocity Heading Redirection & 3D Progressive Lateral Tire Grip
       this.isDrifting = input.handbrake && Math.abs(input.steer) > 0.05;
       this.soundManager.setDriftActive(this.isDrifting && speed > 5);
 
       if (Math.abs(forwardVel) > 0.15) {
-        const curLinvel = this.body.linvel();
-        const horizSpeed = Math.hypot(curLinvel.x, curLinvel.z);
-        const targetForward = forward.clone().setY(0).normalize();
-        const targetLinvel = targetForward.multiplyScalar(Math.sign(forwardVel) * horizSpeed);
+        // Project forward vector onto surface tangent plane
+        let tangentForward = forward.clone().sub(
+          this.contactNormal.clone().multiplyScalar(forward.dot(this.contactNormal))
+        ).normalize();
+        if (tangentForward.lengthSq() < 0.01) {
+          tangentForward = forward.clone().normalize();
+        }
 
-        // Smooth tire grip rate: normal driving is planted and predictable (14.0), drift has subtle slip (4.8)
-        const steerGripRate = this.isDrifting ? 4.8 : 14.0;
+        const targetLinvel = tangentForward.multiplyScalar(forwardVel);
+
+        const steerGripRate = this.isDrifting ? 5.5 : 18.0;
         const blend = Math.min(1.0, dt * steerGripRate);
-        const newVx = THREE.MathUtils.lerp(curLinvel.x, targetLinvel.x, blend);
-        const newVz = THREE.MathUtils.lerp(curLinvel.z, targetLinvel.z, blend);
+        const newV = currentVel.clone().lerp(targetLinvel, blend);
 
-        this.body.setLinvel(new RAPIER.Vector3(newVx, curLinvel.y, newVz), true);
+        this.body.setLinvel(new RAPIER.Vector3(newV.x, newV.y, newV.z), true);
       }
     } else {
       this.soundManager.setDriftActive(false);
